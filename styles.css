@@ -743,7 +743,8 @@ a:hover {
 
 button:focus-visible,
 a:focus-visible,
-.hit:focus-visible {
+.hit:focus-visible,
+.meal-log summary:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -807,6 +808,7 @@ code {
   .jump-sheet,
   .sheet-backdrop,
   .chevron,
+  .meal-log summary::after,
   .row-btn,
   .jump-sheet a,
   body,
@@ -930,6 +932,93 @@ code {
   margin: 14px 0 0;
   color: var(--muted);
   font-size: 14px;
+}
+
+.meal-log {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+}
+
+.meal-log summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  font-weight: 700;
+  list-style: none;
+}
+
+.meal-log summary::-webkit-details-marker {
+  display: none;
+}
+
+.meal-log summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform 0.18s ease;
+}
+
+.meal-log[open] summary::after {
+  transform: rotate(-135deg) translateY(-2px);
+}
+
+.meal-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.meal-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.meal-row {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  background: var(--chip-bg);
+  border-radius: 12px;
+}
+
+.meal-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  font-weight: 700;
+}
+
+.meal-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.meal-note,
+.meal-macros {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.meal-log .fine {
+  margin: 0 0 8px;
 }
 
 .badge {

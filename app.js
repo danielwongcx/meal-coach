@@ -280,8 +280,9 @@ function nutritionChartMetrics() {
   const present = new Set();
   daysSorted().forEach((day) => {
     Object.keys(day).forEach((key) => {
-      if (key === "date" || key === "partial") return;
-      if (Number.isFinite(Number(day[key]))) present.add(key);
+      if (key === "date" || key === "partial" || key === "meals") return;
+      if (typeof day[key] !== "number" || !Number.isFinite(day[key])) return;
+      present.add(key);
     });
   });
   const ordered = NUTRITION_CHART_ORDER.filter((key) => present.has(key));
@@ -419,6 +420,66 @@ function daySlide(day) {
   );
 }
 
+const MEAL_FIELDS = [
+  { key: "kcal", label: "", unit: "kcal" },
+  { key: "carbs", label: "碳水", unit: "g" },
+  { key: "sugar", label: "糖", unit: "g" },
+  { key: "fiber", label: "纖維", unit: "g" },
+  { key: "protein", label: "蛋白", unit: "g" },
+  { key: "fat", label: "脂肪", unit: "g" },
+  { key: "sodium", label: "鈉", unit: "mg" },
+];
+
+function dayMeals(day) {
+  if (!day || !Array.isArray(day.meals)) return [];
+  return day.meals.filter((entry) => entry && entry.name);
+}
+
+function fmtAmount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  const rounded = Math.round(number * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function mealMacroText(entry) {
+  return MEAL_FIELDS.map((field) => {
+    const text = fmtAmount(entry[field.key]);
+    if (!text) return "";
+    return (field.label ? field.label + " " : "") + text + " " + field.unit;
+  }).filter(Boolean).join(" · ");
+}
+
+function mealLogHtml(day) {
+  const meals = dayMeals(day);
+  const open = day && day.date === latestDate() ? " open" : "";
+  const count = meals.length ? '<span class="meal-count num">' + meals.length + " 項</span>" : "";
+  let body = '<p class="fine">未有逐項紀錄。</p>';
+  if (meals.length) {
+    const anyMacro = meals.some((entry) => MEAL_FIELDS.some((field) => fmtAmount(entry[field.key])));
+    const note = anyMacro ? "" : '<p class="fine">逐項營養未分開記，上面係當日總數。</p>';
+    body = note + '<ul class="meal-list">' + meals.map((entry) => {
+      const meal = entry.meal ? '<span class="meal-tag">' + esc(entry.meal) + "</span>" : "";
+      const macros = mealMacroText(entry);
+      const macroHtml = macros ? '<p class="meal-macros num">' + esc(macros) + "</p>" : "";
+      const extra = entry.note ? '<p class="meal-note">' + esc(entry.note) + "</p>" : "";
+      return (
+        '<li class="meal-row">' +
+          '<p class="meal-top">' + meal + '<span class="meal-name">' + esc(entry.name) + "</span></p>" +
+          extra +
+          macroHtml +
+        "</li>"
+      );
+    }).join("") + "</ul>";
+  }
+  return (
+    '<details class="meal-log"' + open + ">" +
+      '<summary><span>詳細每日記錄</span>' + count + "</summary>" +
+      body +
+    "</details>"
+  );
+}
+
 function todaySection() {
   const day = currentDay();
   const latest = !day || day.date === latestDate();
@@ -445,6 +506,7 @@ function todaySection() {
       '<div class="day-track" tabindex="0" aria-label="每日營養，左右滑睇其他日子">' +
         days.map(daySlide).join("") +
       "</div>" +
+      '<div id="meal-slot">' + mealLogHtml(day) + "</div>" +
       '<p class="legend-line" aria-hidden="true">🔴超 · 🟡近 · 🟢低 · 🟢好</p>' +
       '<p class="visually-hidden">超係明顯超標。近係大約八成五至一百一。低係未夠。好係上限之下，唔使再加。</p>' +
     "</section>"
@@ -1591,6 +1653,8 @@ function syncSelection(source, scope) {
   updateChevrons();
   const advice = document.querySelector("#advice-live");
   if (advice) advice.innerHTML = adviceLiveHtml(day);
+  const meals = document.querySelector("#meal-slot");
+  if (meals) meals.innerHTML = mealLogHtml(day);
   document.querySelectorAll("table.days tbody tr").forEach((row) => {
     const on = row.getAttribute("data-select") === day.date;
     row.classList.toggle("is-on", on);
@@ -1880,6 +1944,17 @@ function runSelfCheck() {
   expect(data.foodLists.fiber.some((item) => item.includes("菜心")) && data.foodLists.fiber.some((item) => item.includes("Ryvita")), "fiber examples");
   expect(Array.isArray(data.foodLists.tips) && data.foodLists.tips.some((item) => item.includes("甜果")), "fiber sugar tip");
   expect(daysNewest()[0].date === "2026-10-19", "newest first");
+  const logged = daysSorted().find((day) => day.date === "2026-10-19");
+  expect(logged.kcal === 1081.5 && logged.partial === true, "oct 19 totals stay");
+  expect(Array.isArray(logged.meals) && logged.meals.some((item) => item.name.includes("蕃薯")) && logged.meals.some((item) => item.name.includes("餃子")), "oct 19 foods");
+  expect(daysSorted().filter((day) => day.date !== "2026-10-19").every((day) => Array.isArray(day.meals) && day.meals.length === 0), "no invented older meals");
+  expect(mealMacroText({ name: "例", kcal: 1081.5, sodium: 749, carbs: 12 }) === "1081.5 kcal · 碳水 12 g · 鈉 749 mg", mealMacroText({ name: "例", kcal: 1081.5, sodium: 749, carbs: 12 }));
+  const todayLog = mealLogHtml(logged);
+  expect(todayLog.startsWith('<details class="meal-log" open>') && todayLog.includes("蕃薯") && todayLog.includes("餃子 × 8") && todayLog.includes("醋同麻油醬") && todayLog.includes("逐項營養未分開記"), "today log");
+  const olderLog = mealLogHtml(daysSorted().find((day) => day.date === "2026-10-18"));
+  expect(olderLog.startsWith('<details class="meal-log">') && olderLog.includes("未有逐項紀錄。"), "older log stays closed");
+  const taggedLog = mealLogHtml({ date: "1999-01-01", meals: [{ name: "蛋", meal: "早餐", kcal: 80, protein: 6 }] });
+  expect(taggedLog.includes("早餐") && taggedLog.includes("80 kcal") && taggedLog.includes("蛋白 6 g") && taggedLog.startsWith('<details class="meal-log">'), taggedLog);
   const lineAnim = chartAnimations("line", 11);
   expect(Number.isNaN(lineAnim.x.from), "line starts hidden and draws across");
   expect(typeof lineAnim.y.from === "function", "line y follows the previous point");
