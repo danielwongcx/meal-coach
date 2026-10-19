@@ -1021,10 +1021,18 @@ function announce(day) {
   live.textContent = prefix + "。" + coachNote(day);
 }
 
+function sectionHash(hash) {
+  return /^(today|trends|days|fitness|advice)$/.test(hash);
+}
+
 function writeHash() {
   const url = new URL(window.location.href);
-  url.hash = selectedDate === latestDate() ? "" : selectedDate;
-  history.replaceState(null, "", url.pathname + url.search + url.hash);
+  const current = decodeURIComponent(url.hash.replace(/^#/, ""));
+  if (selectedDate === latestDate()) url.searchParams.delete("day");
+  else url.searchParams.set("day", selectedDate);
+  if (!sectionHash(current)) url.hash = selectedDate === latestDate() ? "" : selectedDate;
+  const search = url.searchParams.toString();
+  history.replaceState(null, "", url.pathname + (search ? "?" + search : "") + url.hash);
 }
 
 function syncSelection(source, scope) {
@@ -1080,7 +1088,7 @@ function choose(date, source, scope) {
   if (!daysSorted().some((day) => day.date === date)) return;
   if (date === selectedDate) return;
   selectedDate = date;
-  if (source !== "hash") writeHash();
+  writeHash();
   if (!document.querySelector(".day-track")) {
     render();
     announce(currentDay());
@@ -1142,7 +1150,7 @@ function bindChrome() {
   });
   const backdrop = layer.querySelector(".sheet-backdrop");
   if (backdrop) backdrop.addEventListener("click", () => setSheet(false, { focus: true }));
-  const sheet = layer.querySelector(".sheet");
+  const sheet = document.querySelector("#nav-sheet");
   if (sheet) {
     sheet.addEventListener("click", (event) => {
       if (event.target.closest("a")) setSheet(false, { focus: false });
@@ -1168,10 +1176,15 @@ function assertData(data) {
   if (!data.fitnessGoals) throw new Error("data.json 缺少 fitnessGoals");
 }
 
+function knownDay(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value || "") && daysSorted().some((day) => day.date === value);
+}
+
 function dateFromHash() {
   const hash = decodeURIComponent(location.hash.replace(/^#/, ""));
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(hash)) return "";
-  return daysSorted().some((day) => day.date === hash) ? hash : "";
+  if (knownDay(hash)) return hash;
+  const day = new URL(window.location.href).searchParams.get("day");
+  return knownDay(day) ? day : "";
 }
 
 function init() {
@@ -1204,6 +1217,7 @@ function init() {
       const updated = document.querySelector("#updated");
       if (updated && snapshot.updatedAt) updated.textContent = "更新 " + formatUpdated(snapshot.updatedAt);
       render();
+      writeHash();
     })
     .catch((error) => {
       console.error(error);
