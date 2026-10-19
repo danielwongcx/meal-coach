@@ -22,7 +22,7 @@ python3 -m http.server 8080
 
 Open http://localhost:8080/
 
-No build step. Charts use [Chart.js](https://www.chartjs.org/) 4.4.6 (MIT), saved as `chart.umd.min.js`. Each chart draws left to right with an ease-in (`easeInQuad`) whenever it scrolls into view, and again after it leaves and comes back. The 今日 meters grow the same way. `prefers-reduced-motion` skips that animation. The page stays within the screen width; wide tables scroll inside their own area.
+No build step. Charts use [Chart.js](https://www.chartjs.org/) 4.4.6 (MIT), saved as `chart.umd.min.js`. Each chart draws left to right with an ease-in (`easeInQuad`) whenever it scrolls into view, and again after it leaves and comes back. The area under a line fades from the series color down to clear. The 今日 meters and the 活動 rings grow the same way; a ring past 100% keeps going into a second lap. `prefers-reduced-motion` skips that animation. The page stays within the screen width; wide tables scroll inside their own area.
 
 The header button switches dark and light. The choice is stored in `localStorage` (`meal-coach-theme`). With nothing stored, the page follows the system theme. Nutrition trends cover every number in `daily` (熱量、碳水、糖、纖維、蛋白、鈉, plus fat when a row has it). Fitness trends cover 活動、運動、站立、步數, and 公里. Goal lines are drawn only where `quotas` or `fitnessGoals` has a number. Steps and kilometres have no goal line.
 

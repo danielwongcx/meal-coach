@@ -519,8 +519,19 @@ h3 {
   height: auto;
 }
 
-.ring-track {
+.ring-track,
+.ring-arc,
+.ring-over {
   fill: none;
+}
+
+.ring-arc,
+.ring-over {
+  stroke-linecap: round;
+  stroke-dasharray: 0 999;
+}
+
+.ring-track {
   stroke: var(--track);
 }
 
@@ -1265,5 +1276,10 @@ body.modal-open {
 
   .fill {
     width: var(--fill, 0%);
+  }
+
+  .ring-arc,
+  .ring-over {
+    stroke-dasharray: var(--ring-final);
   }
 }

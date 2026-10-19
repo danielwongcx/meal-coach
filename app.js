@@ -580,22 +580,46 @@ function daysModal() {
   );
 }
 
+function ringRatio(value, goal) {
+  const cap = Number(goal);
+  const raw = cap ? Number(value) / cap : 0;
+  return Number.isFinite(raw) ? Math.max(0, raw) : 0;
+}
+
+function ringFrame(ratio, eased) {
+  const current = Math.max(0, Number(ratio) || 0) * Math.min(1, Math.max(0, Number(eased) || 0));
+  return {
+    current: current,
+    base: Math.min(1, current),
+    over: Math.min(1, Math.max(0, current - 1)),
+  };
+}
+
+function lightenHex(hex, amount) {
+  const raw = String(hex).replace("#", "");
+  const num = parseInt(raw, 16);
+  if (!Number.isFinite(num) || raw.length < 6) return hex;
+  const mix = (channel) => Math.round(channel + (255 - channel) * amount);
+  const parts = [mix((num >> 16) & 255), mix((num >> 8) & 255), mix(num & 255)];
+  return "#" + parts.map((part) => part.toString(16).padStart(2, "0")).join("");
+}
+
 function ringSvg(value, goal, color) {
   const radius = 40;
-  const circ = 2 * Math.PI * radius;
-  const ratio = goal ? Number(value) / Number(goal) : 0;
-  const shown = Math.max(0, Math.min(ratio, 1));
-  const full = shown >= 0.999;
-  const dash = (shown * circ).toFixed(2);
-  const gap = (circ - shown * circ).toFixed(2);
-  const arc = full
-    ? '<circle cx="60" cy="60" r="' + radius + '" fill="none" stroke="' + color + '" stroke-width="11"></circle>'
-    : '<circle cx="60" cy="60" r="' + radius + '" fill="none" stroke="' + color + '" stroke-width="11" stroke-linecap="round" stroke-dasharray="' + dash + " " + gap + '" transform="rotate(-90 60 60)"></circle>';
+  const circ = (2 * Math.PI * radius).toFixed(2);
+  const ratio = ringRatio(value, goal);
+  const label = pctText(value, goal);
+  const base = (Math.min(1, ratio) * Number(circ)).toFixed(2);
+  const extra = (Math.min(1, Math.max(0, ratio - 1)) * Number(circ)).toFixed(2);
+  const over = ratio > 1
+    ? '<circle class="ring-over" cx="60" cy="60" r="' + radius + '" stroke="' + lightenHex(color, 0.42) + '" stroke-width="11" data-circ="' + circ + '" style="--ring-final:' + extra + " " + circ + '" transform="rotate(-90 60 60)"></circle>'
+    : "";
   return (
     '<svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">' +
       '<circle class="ring-track" cx="60" cy="60" r="' + radius + '" stroke-width="11"></circle>' +
-      arc +
-      '<text class="ring-label" x="60" y="66" text-anchor="middle" font-size="16" font-weight="700" font-family="Georgia, serif">' + esc(pctText(value, goal)) + "</text>" +
+      '<circle class="ring-arc" cx="60" cy="60" r="' + radius + '" stroke="' + color + '" stroke-width="11" data-circ="' + circ + '" style="--ring-final:' + base + " " + circ + '" transform="rotate(-90 60 60)"></circle>' +
+      over +
+      '<text class="ring-label" x="60" y="66" text-anchor="middle" font-size="16" font-weight="700" font-family="Georgia, serif" data-label="' + esc(label) + '">' + esc(label) + "</text>" +
     "</svg>"
   );
 }
@@ -616,7 +640,7 @@ function fitnessLiveHtml() {
     const goal = goals[meta.goalKey];
     const met = Number(value) >= Number(goal);
     return (
-      '<figure class="ring">' +
+      '<figure class="ring" data-ratio="' + ringRatio(value, goal).toFixed(4) + '">' +
         ringSvg(value, goal, meta.color) +
         "<figcaption>" +
           '<span class="ring-name">' + esc(meta.label) + "</span>" +
@@ -843,6 +867,8 @@ function axisLabel(points, point) {
 }
 
 function clearCharts() {
+  if (ringRaf) cancelAnimationFrame(ringRaf);
+  ringRaf = 0;
   charts.forEach((entry) => {
     if (entry.raf) cancelAnimationFrame(entry.raf);
     if (entry.chart) entry.chart.destroy();
@@ -1042,6 +1068,57 @@ function resetTodayBars(section) {
   });
 }
 
+let ringRaf = 0;
+
+function paintRing(el, portion) {
+  if (!el) return;
+  const circ = Number(el.dataset.circ) || 1;
+  const drawn = Math.max(0, portion) * circ;
+  el.style.strokeDasharray = drawn.toFixed(2) + " " + circ.toFixed(2);
+  el.style.strokeLinecap = portion >= 0.999 ? "butt" : "round";
+}
+
+function applyRingFrame(eased) {
+  document.querySelectorAll("#fitness .ring").forEach((ring) => {
+    const frame = ringFrame(Number(ring.dataset.ratio) || 0, eased);
+    paintRing(ring.querySelector(".ring-arc"), frame.base);
+    paintRing(ring.querySelector(".ring-over"), frame.over);
+    const label = ring.querySelector(".ring-label");
+    if (!label) return;
+    if (eased >= 1 && label.dataset.label) label.textContent = label.dataset.label;
+    else label.textContent = Math.round(frame.current * 100) + "%";
+  });
+}
+
+function playRings() {
+  if (ringRaf) cancelAnimationFrame(ringRaf);
+  ringRaf = 0;
+  if (!document.querySelector("#fitness .ring")) return;
+  if (!motionOK()) {
+    applyRingFrame(1);
+    return;
+  }
+  const started = performance.now();
+  applyRingFrame(0);
+  const frame = (now) => {
+    const t = Math.min(1, (now - started) / REVEAL_MS);
+    applyRingFrame(revealEase(t));
+    if (t < 1) ringRaf = requestAnimationFrame(frame);
+    else {
+      applyRingFrame(1);
+      ringRaf = 0;
+    }
+  };
+  ringRaf = requestAnimationFrame(frame);
+}
+
+function resetRings() {
+  if (ringRaf) cancelAnimationFrame(ringRaf);
+  ringRaf = 0;
+  if (!motionOK()) return;
+  applyRingFrame(0);
+}
+
 function themeName() {
   return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
 }
@@ -1060,13 +1137,29 @@ function chartSeriesColor(key) {
   return cssVar("--chart-" + key, CHART_COLOR[key] || "#f6efe6");
 }
 
+function areaFill(color) {
+  return function (context) {
+    const chart = context && context.chart;
+    const area = chart && chart.chartArea;
+    const light = themeName() === "light";
+    const top = light ? 0.36 : 0.48;
+    const mid = light ? 0.1 : 0.14;
+    if (!area || !chart.ctx) return hexAlpha(color, top);
+    const gradient = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+    gradient.addColorStop(0, hexAlpha(color, top));
+    gradient.addColorStop(0.62, hexAlpha(color, mid));
+    gradient.addColorStop(1, hexAlpha(color, 0));
+    return gradient;
+  };
+}
+
 function paintChart(entry) {
   const colors = themeColors();
   const color = chartSeriesColor(entry.spec.key);
   const card = colors.card;
   const set = entry.chart.data.datasets[0];
   set.borderColor = color;
-  set.backgroundColor = hexAlpha(color, 0.18);
+  set.backgroundColor = areaFill(color);
   set.pointBorderColor = color;
   set.pointRadius = entry.points.map((point) => (point.date === selectedDate ? 7 : point.partial ? 5 : 3.5));
   set.pointHoverRadius = entry.points.map((point) => (point.date === selectedDate ? 8 : 5));
@@ -1158,7 +1251,7 @@ function buildChart(figure, item) {
     {
       data: points.map((point) => point.value),
       borderColor: series,
-      backgroundColor: hexAlpha(series, 0.18),
+      backgroundColor: areaFill(series),
       fill: true,
       tension: 0.25,
       pointRadius: points.map((point) => (point.date === selectedDate ? 7 : point.partial ? 5 : 3.5)),
@@ -1258,7 +1351,7 @@ function mountObservers() {
   registerLtrPlugin();
   const nodes = [];
   const seen = new Set();
-  document.querySelectorAll(".reveal, .chart[data-chart-id], #today").forEach((node) => {
+  document.querySelectorAll(".reveal, .chart[data-chart-id], #today, #fitness").forEach((node) => {
     if (seen.has(node)) return;
     seen.add(node);
     nodes.push(node);
@@ -1273,6 +1366,10 @@ function mountObservers() {
       node.dataset.bars = "1";
       playTodayBars(node);
     }
+    if (node.id === "fitness" && node.dataset.rings !== "1") {
+      node.dataset.rings = "1";
+      playRings();
+    }
   };
   const hide = (node) => {
     if (node.dataset.chartId) {
@@ -1282,6 +1379,10 @@ function mountObservers() {
     if (node.id === "today") {
       node.dataset.bars = "";
       resetTodayBars(node);
+    }
+    if (node.id === "fitness") {
+      node.dataset.rings = "";
+      resetRings();
     }
   };
   if (typeof IntersectionObserver === "undefined") {
@@ -1499,7 +1600,11 @@ function syncSelection(source, scope) {
     if (button) button.setAttribute("aria-pressed", on ? "true" : "false");
   });
   const fit = document.querySelector("#fitness-live");
-  if (fit) fit.innerHTML = fitnessLiveHtml();
+  if (fit) {
+    fit.innerHTML = fitnessLiveHtml();
+    const section = document.querySelector("#fitness");
+    if (section && section.dataset.rings === "1") playRings();
+  }
   const shown = shownFitness();
   document.querySelectorAll("table.fitness tbody tr").forEach((row) => {
     const on = !!(shown.row && row.getAttribute("data-select") === shown.row.date);
@@ -1791,6 +1896,13 @@ function runSelfCheck() {
   expect(barAnim.width.from === 0, "bars grow in width");
   expect(barAnim.width.easing === "easeInQuad", "bars ease in");
   expect(barAnim.width.delay({ type: "data", index: 3 }) > barAnim.width.delay({ type: "data", index: 0 }), "bars progress left to right");
+  const full = ringFrame(480 / 360, 1);
+  const partial = ringFrame(7 / 12, 1);
+  const earlyRing = ringFrame(480 / 360, 0.25);
+  expect(full.base === 1 && full.over > 0.3 && full.over < 0.4, "move ring continues past a full circle");
+  expect(partial.over === 0 && partial.base > 0.5 && partial.base < 0.7, "stand ring stays under a full circle");
+  expect(earlyRing.base < full.base && earlyRing.over === 0, "rings start filling before the extra lap");
+  expect(typeof areaFill("#e0894a") === "function", "line area is a gradient fill");
 }
 
 if (typeof process !== "undefined" && process.argv && process.argv.includes("--check")) {
