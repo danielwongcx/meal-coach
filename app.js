@@ -1837,7 +1837,7 @@ function runSelfCheck() {
   selectedDate = "2026-10-19";
   const todayNote = coachNote(currentDay());
   expect(todayNote.includes("進行中") && todayNote.includes("蛋白") && todayNote.includes("低"), todayNote);
-  expect(!todayNote.includes("糖"), todayNote);
+  expect(todayNote.includes("糖") && todayNote.includes("近"), todayNote);
   selectedDate = "2026-10-14";
   const highNote = coachNote(currentDay());
   expect(highNote.includes("超") && highNote.includes("2,750") && highNote.includes("56"), highNote);
