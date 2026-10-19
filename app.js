@@ -16,18 +16,18 @@ const METRICS = [
 
 const NUTRITION_CHART_ORDER = ["kcal", "carbs", "sugar", "fiber", "protein", "sodium", "fat"];
 const CHART_COLOR = {
-  kcal: "#c4622d",
-  carbs: "#a56b2a",
-  sugar: "#c4536a",
-  fiber: "#5d8a45",
-  protein: "#2f7d4a",
-  sodium: "#2b6e97",
-  fat: "#8a6a3b",
+  kcal: "#e0894a",
+  carbs: "#d4a24a",
+  sugar: "#e16b84",
+  fiber: "#7dae62",
+  protein: "#4caf70",
+  sodium: "#5aa4d4",
+  fat: "#c4a36a",
   move: "#e15a4a",
   exercise: "#3c9a45",
   stand: "#148a9a",
-  steps: "#6d5438",
-  km: "#3d6f8f",
+  steps: "#c4a36a",
+  km: "#7eb0d4",
 };
 const FITNESS_CHARTS = [
   { key: "move", label: "活動", unit: "kcal", goalKey: "move", format: "int" },
@@ -45,6 +45,11 @@ const RING_META = [
 
 let snapshot = null;
 let selectedDate = "";
+let pending = [];
+let charts = [];
+let revealObserver = null;
+let scrollTimer = 0;
+let scrollLock = false;
 
 function esc(value) {
   return String(value)
@@ -91,45 +96,15 @@ function metricByKey(key) {
   return METRICS.find((metric) => metric.key === key);
 }
 
-function classify(key, value, quota, partial) {
+function classify(key, value, quota) {
   const metric = metricByKey(key);
   const kind = metric ? metric.kind : "balance";
   const cap = Number(quota);
   const ratio = cap ? Number(value) / cap : 0;
-
-  if (kind === "cap") {
-    if (ratio > 1.1) return { tone: "bad", label: "超標" };
-    if (ratio > 1) return { tone: "warn", label: "超少少" };
-    if (ratio > 0.9) return { tone: "warn", label: "接近上限" };
-    return { tone: "good", label: "未到上限" };
-  }
-
-  if (kind === "target") {
-    if (ratio >= 1) return { tone: "good", label: "達標" };
-    if (ratio >= 0.9) return { tone: "good", label: "就快達標" };
-    if (partial) return { tone: "progress", label: "進行中" };
-    if (ratio >= 0.7) return { tone: "soft", label: "差少少" };
-    return { tone: "soft", label: "未夠" };
-  }
-
-  if (partial) {
-    if (ratio > 1.1) return { tone: "bad", label: "已超目標" };
-    if (ratio > 1) return { tone: "warn", label: "已到目標" };
-    return { tone: "progress", label: "進行中" };
-  }
-
-  if (ratio >= 0.9 && ratio <= 1.1) return { tone: "good", label: "貼近目標" };
-  if (ratio > 1.1 && ratio <= 1.2) return { tone: "warn", label: "高少少" };
-  if (ratio > 1.2) return { tone: "bad", label: "超標" };
-  if (ratio >= 0.75) return { tone: "soft", label: "低少少" };
-  return { tone: "soft", label: "偏低" };
-}
-
-function markFor(tone) {
-  if (tone === "bad") return "超";
-  if (tone === "warn") return "近";
-  if (tone === "soft") return "低";
-  return "";
+  if (ratio > 1.1) return { tone: "bad", mark: "超", label: "超標", emoji: "🔴" };
+  if (ratio >= 0.85) return { tone: "warn", mark: "近", label: "接近", emoji: "🟡" };
+  if (kind === "cap") return { tone: "good", mark: "好", label: "未到上限", emoji: "🟢" };
+  return { tone: "soft", mark: "低", label: "未夠", emoji: "🟢" };
 }
 
 function parts(iso) {
@@ -166,6 +141,10 @@ function daysSorted() {
   return [...(snapshot.daily || [])].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
+function daysNewest() {
+  return [...daysSorted()].reverse();
+}
+
 function fitnessSorted() {
   return [...(snapshot.fitness || [])].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
@@ -187,37 +166,30 @@ function visibleMetrics(day) {
   return METRICS.filter((metric) => Object.prototype.hasOwnProperty.call(day, metric.key) && snapshot.quotas[metric.quotaKey] != null);
 }
 
+function calloutItems(day) {
+  const items = [];
+  visibleMetrics(day).forEach((metric) => {
+    const quota = snapshot.quotas[metric.quotaKey];
+    const value = Number(day[metric.key]);
+    const status = classify(metric.key, value, quota);
+    const show = status.mark === "低" || status.mark === "超" || (status.mark === "近" && metric.kind === "cap");
+    if (!show) return;
+    items.push({
+      metric: metric,
+      status: status,
+      value: value,
+      quota: quota,
+      text: metric.label + " " + status.mark + " " + fmtInt(value) + " / " + fmtInt(quota) + " " + metric.unit,
+    });
+  });
+  return items;
+}
+
 function coachNote(day) {
-  const quotas = snapshot.quotas;
   const bits = [];
-  if (day.partial) {
-    bits.push("呢日仲未完，以下係截至而家，唔當全日結算。");
-  } else {
-    const kcalStatus = classify("kcal", day.kcal, quotas.kcal, false);
-    if (kcalStatus.tone === "good") bits.push("熱量貼近目標。");
-    else if (kcalStatus.tone === "bad") bits.push("熱量超標，去到 " + pctText(day.kcal, quotas.kcal) + "。");
-    else if (kcalStatus.tone === "warn") bits.push("熱量高少少。");
-    else bits.push("熱量偏低。");
-
-    const proteinGap = quotas.protein_g - day.protein;
-    if (day.protein >= quotas.protein_g) bits.push("蛋白達標。");
-    else if (day.protein >= quotas.protein_g * 0.9) bits.push("蛋白就快達標。");
-    else bits.push("蛋白未夠，差 " + fmtInt(proteinGap) + " g。");
-  }
-
-  if (day.sugar > quotas.sugar_g * 1.1) bits.push("糖超標（" + fmtInt(day.sugar) + " g）。");
-  else if (day.sugar > quotas.sugar_g) bits.push("糖超少少（" + fmtInt(day.sugar) + " / " + fmtInt(quotas.sugar_g) + " g）。");
-  else if (day.partial) bits.push("糖 " + fmtInt(day.sugar) + " / " + fmtInt(quotas.sugar_g) + " g，未貼上限。");
-  else if (day.sugar > quotas.sugar_g * 0.9) bits.push("糖接近上限。");
-
-  if (day.sodium > quotas.sodium_mg * 1.1) bits.push("鈉超標（" + fmtInt(day.sodium) + " mg）。");
-  else if (day.sodium > quotas.sodium_mg) bits.push("鈉超少少（" + fmtInt(day.sodium) + " / " + fmtInt(quotas.sodium_mg) + " mg）。");
-  else if (!day.partial && day.sodium > quotas.sodium_mg * 0.9) bits.push("鈉接近上限。");
-
-  if (!day.partial && day.fiber < quotas.fiber_g * 0.9) {
-    bits.push("纖維差 " + fmtInt(quotas.fiber_g - day.fiber) + " g。");
-  }
-  return bits.join("");
+  if (day.partial) bits.push("進行中");
+  calloutItems(day).forEach((item) => bits.push(item.text));
+  return bits.join(" ");
 }
 
 function heroSub(day) {
@@ -329,9 +301,10 @@ function nutritionSpec(metric) {
   const words = { cap: "上限", target: "目標", balance: "配額" };
   const quota = metric.quotaKey != null ? Number(snapshot.quotas[metric.quotaKey]) : null;
   return {
+    key: metric.key,
     label: metric.label,
     unit: metric.unit,
-    color: CHART_COLOR[metric.key] || "#241c14",
+    color: CHART_COLOR[metric.key] || "#f6efe6",
     quota: Number.isFinite(quota) && quota > 0 ? quota : null,
     kind: metric.kind,
     lineWord: words[metric.kind] || "配額",
@@ -356,7 +329,7 @@ function fitnessChartSpecs() {
         key: item.key,
         label: item.label,
         unit: item.unit,
-        color: CHART_COLOR[item.key] || "#241c14",
+        color: CHART_COLOR[item.key] || "#f6efe6",
         quota: quota,
         kind: quota == null ? "range" : "goal",
         lineWord: "目標",
@@ -372,11 +345,27 @@ function fitnessPoints(key) {
     .map((row) => ({ date: row.date, value: Number(row[key]), partial: false }));
 }
 
+function chartModel(points, spec) {
+  return {
+    dates: points.map((point) => point.date),
+    quota: spec.quota,
+  };
+}
+
+function badgeHtml(status) {
+  return (
+    '<span class="badge tone-' + status.tone + '">' +
+      '<span aria-hidden="true">' + status.emoji + esc(status.mark) + "</span>" +
+      '<span class="visually-hidden">' + esc(status.label) + "</span>" +
+    "</span>"
+  );
+}
+
 function metricRows(day) {
   return visibleMetrics(day).map((metric) => {
     const quota = snapshot.quotas[metric.quotaKey];
     const value = Number(day[metric.key]);
-    const status = classify(metric.key, value, quota, !!day.partial);
+    const status = classify(metric.key, value, quota);
     const width = fillPct(value, quota).toFixed(1);
     const over = value > quota ? " is-over" : "";
     const valueText = fmtInt(value) + " / " + fmtInt(quota) + " " + metric.unit;
@@ -392,7 +381,7 @@ function metricRows(day) {
           '<span class="fill tone-' + status.tone + over + '" style="width:' + width + '%"></span>' +
         "</div>" +
         '<div class="metric-foot">' +
-          '<span class="status tone-' + status.tone + '">' + esc(status.label) + "</span>" +
+          badgeHtml(status) +
           '<span class="pct num tone-' + status.tone + '">' + esc(percent) + "</span>" +
         "</div>" +
       "</div>"
@@ -400,55 +389,64 @@ function metricRows(day) {
   }).join("");
 }
 
-function legendHtml() {
-  return (
-    '<ul class="legend">' +
-      '<li><i class="swatch good" aria-hidden="true"></i>貼近、達標、未到上限</li>' +
-      '<li><i class="swatch warn" aria-hidden="true"></i>接近上限或超少少</li>' +
-      '<li><i class="swatch bad" aria-hidden="true"></i>明顯超標</li>' +
-      '<li><i class="swatch soft" aria-hidden="true"></i>蛋白或纖維未夠</li>' +
-      '<li><i class="swatch progress" aria-hidden="true"></i>當日進行中</li>' +
-    "</ul>"
-  );
-}
-
 function fatNote() {
   const hasFat = daysSorted().some((day) => Object.prototype.hasOwnProperty.call(day, "fat"));
   if (hasFat || snapshot.quotas.fat_g == null) return "";
-  return '<p class="fine">脂肪配額係 ' + fmtInt(snapshot.quotas.fat_g) + " g。呢份每日紀錄未有脂肪，所以唔列出。</p>";
+  return '<p class="fine">脂肪配額 ' + fmtInt(snapshot.quotas.fat_g) + " g。每日紀錄未有脂肪，所以唔計。</p>";
 }
 
-function dayCard(day) {
-  const latest = day.date === latestDate();
-  const p = parts(day.date);
-  const heading = latest ? "今日" : p.m + "月" + p.d + "日";
-  const sub = latest
-    ? p.m + "月" + p.d + "日（" + weekdayChar(day.date) + "）"
-    : "星期" + weekdayChar(day.date) + (day.partial ? " · 進行中" : " · 完整日");
-  const kcalStatus = classify("kcal", day.kcal, snapshot.quotas.kcal, !!day.partial);
-  const banner = day.partial
-    ? '<p class="banner">進行中 · ' + esc(dateLabel(day.date)) + " 未完成，唔好當全日結算。</p>"
-    : "";
-  const back = latest ? "" : '<button type="button" class="text-btn" data-go-latest>返回今日</button>';
+function chevronIcon(direction) {
+  const path = direction === "left" ? "M14.5 5.5 8 12l6.5 6.5" : "M9.5 5.5 16 12l-6.5 6.5";
+  return '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="' + path + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+}
+
+function daySlide(day) {
+  const on = day.date === selectedDate;
+  const kcalStatus = classify("kcal", day.kcal, snapshot.quotas.kcal);
+  const banner = day.partial ? '<p class="banner">進行中</p>' : "";
   return (
-    '<section class="card day-card" id="day-card" aria-labelledby="day-heading">' +
+    '<article class="day-slide' + (on ? " is-current" : "") + '" data-slide="' + esc(day.date) + '" aria-hidden="' + (on ? "false" : "true") + '">' +
       banner +
-      '<div class="day-head">' +
-        "<div>" +
-          '<h2 id="day-heading">' + esc(heading) + "</h2>" +
-          '<p class="date-line">' + esc(sub) + "</p>" +
-        "</div>" +
-        back +
-      "</div>" +
+      '<p class="slide-date">' + esc(dateLabel(day.date)) + " · 星期" + esc(weekdayChar(day.date)) + "</p>" +
       '<p class="hero-line">' +
         '<span class="hero-value num tone-' + kcalStatus.tone + '">' + fmtInt(day.kcal) + "</span>" +
         '<span class="hero-unit">kcal</span>' +
+        badgeHtml(kcalStatus) +
       "</p>" +
       '<p class="hero-sub num">' + esc(heroSub(day)) + "</p>" +
-      '<p class="note">' + esc(coachNote(day)) + "</p>" +
       metricRows(day) +
-      legendHtml() +
-      fatNote() +
+    "</article>"
+  );
+}
+
+function todaySection() {
+  const day = currentDay();
+  const latest = !day || day.date === latestDate();
+  const heading = latest ? "今日" : dateLabel(day.date);
+  const sub = latest
+    ? dateLabel(day.date) + "（" + weekdayChar(day.date) + "）"
+    : "星期" + weekdayChar(day.date);
+  const days = daysNewest();
+  const index = days.findIndex((item) => item.date === selectedDate);
+  const newerDisabled = index <= 0 ? " disabled" : "";
+  const olderDisabled = index === -1 || index >= days.length - 1 ? " disabled" : "";
+  return (
+    '<section class="card today-card reveal is-in" id="today" aria-labelledby="today-heading">' +
+      '<div class="day-head">' +
+        "<div>" +
+          '<h2 id="today-heading">' + esc(heading) + "</h2>" +
+          '<p id="today-date" class="date-line">' + esc(sub) + "</p>" +
+        "</div>" +
+        '<div class="day-nav">' +
+          '<button type="button" class="chevron" data-day-step="-1" aria-label="較新一日"' + newerDisabled + ">" + chevronIcon("left") + "</button>" +
+          '<button type="button" class="chevron" data-day-step="1" aria-label="較舊一日"' + olderDisabled + ">" + chevronIcon("right") + "</button>" +
+        "</div>" +
+      "</div>" +
+      '<div class="day-track" tabindex="0" aria-label="每日營養，左右滑睇其他日子">' +
+        days.map(daySlide).join("") +
+      "</div>" +
+      '<p class="legend-line" aria-hidden="true">🔴超 · 🟡近 · 🟢低 · 🟢好</p>' +
+      '<p class="visually-hidden">超係明顯超標。近係大約八成五至一百一。低係未夠。好係上限之下，唔使再加。</p>' +
     "</section>"
   );
 }
@@ -462,78 +460,19 @@ function chip(value, total, label, tone) {
   );
 }
 
-function chartSvg(points, spec) {
-  if (!points.length) return '<p class="fine">未有數字。</p>';
-  const color = spec.color || "#241c14";
-  const quota = spec.quota;
-  const width = 360;
-  const height = 168;
-  const pad = { l: quota == null ? 16 : 52, r: 8, t: 14, b: 26 };
-  const innerW = width - pad.l - pad.r;
-  const innerH = height - pad.t - pad.b;
-  const values = points.map((point) => point.value);
-  let maxY = Math.max(quota || 0, ...values, 0) * 1.16;
-  if (!Number.isFinite(maxY) || maxY <= 0) maxY = 1;
-  const slot = innerW / Math.max(points.length, 1);
-  const xOf = (index) => pad.l + slot * index + slot / 2;
-  const yOf = (value) => pad.t + innerH - (value / maxY) * innerH;
-  const line = values.map((value, index) => (index === 0 ? "M" : "L") + xOf(index).toFixed(1) + " " + yOf(value).toFixed(1)).join(" ");
-  const area = line + " L" + xOf(points.length - 1).toFixed(1) + " " + yOf(0).toFixed(1) + " L" + xOf(0).toFixed(1) + " " + yOf(0).toFixed(1) + " Z";
-  let quotaMark = "";
-  if (quota != null) {
-    const qy = yOf(quota);
-    quotaMark =
-      '<line x1="' + pad.l + '" x2="' + (width - pad.r) + '" y1="' + qy.toFixed(1) + '" y2="' + qy.toFixed(1) + '" stroke="#8d7b66" stroke-width="1.25" stroke-dasharray="4 4"></line>' +
-      '<text x="' + (pad.l - 6) + '" y="' + (qy + 4).toFixed(1) + '" text-anchor="end" font-size="11" fill="#5e5346">' + esc(spec.formatValue(quota)) + "</text>";
-  }
-  let slots = "";
-  let hits = "";
-  let dots = "";
-  let labels = "";
-  points.forEach((point, index) => {
-    const x = xOf(index);
-    const selected = point.date === selectedDate;
-    if (selected) {
-      slots += '<rect x="' + (pad.l + slot * index).toFixed(1) + '" y="' + pad.t + '" width="' + slot.toFixed(1) + '" height="' + innerH.toFixed(1) + '" fill="#f3e6d2"></rect>';
-    }
-    const radius = selected ? 6 : 3.6;
-    if (point.partial || selected) {
-      dots += '<circle cx="' + x.toFixed(1) + '" cy="' + yOf(point.value).toFixed(1) + '" r="' + radius + '" fill="#fffaf3" stroke="' + color + '" stroke-width="2.4"></circle>';
-    } else {
-      dots += '<circle cx="' + x.toFixed(1) + '" cy="' + yOf(point.value).toFixed(1) + '" r="' + radius + '" fill="' + color + '"></circle>';
-    }
-    const prev = index > 0 ? points[index - 1].date : "";
-    const label = !prev || parts(prev).m !== parts(point.date).m ? shortDate(point.date) : String(parts(point.date).d);
-    labels += '<text x="' + x.toFixed(1) + '" y="' + (height - 8) + '" text-anchor="middle" font-size="10" fill="#5e5346">' + esc(label) + "</text>";
-    const title = dateLabel(point.date) + " · " + spec.formatValue(point.value) + (spec.unit ? " " + spec.unit : "") + (point.partial ? " · 進行中" : "");
-    hits += '<rect class="hit" data-chart-date="' + esc(point.date) + '" x="' + (pad.l + slot * index).toFixed(1) + '" y="' + pad.t + '" width="' + slot.toFixed(1) + '" height="' + (innerH + 20).toFixed(1) + '" fill="transparent" tabindex="-1"><title>' + esc(title) + "</title></rect>";
-  });
-
-  return (
-    '<svg viewBox="0 0 ' + width + " " + height + '" aria-hidden="true" focusable="false">' +
-      slots +
-      '<line x1="' + pad.l + '" x2="' + (width - pad.r) + '" y1="' + yOf(0).toFixed(1) + '" y2="' + yOf(0).toFixed(1) + '" stroke="#eadfce" stroke-width="1"></line>' +
-      quotaMark +
-      '<path d="' + area + '" fill="' + color + '" fill-opacity="0.14"></path>' +
-      '<path d="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></path>' +
-      dots +
-      labels +
-      hits +
-    "</svg>"
-  );
-}
-
 function chartFigure(points, spec) {
+  const id = "chart-" + spec.key;
+  pending.push({ id: id, points: points, spec: spec });
   const caption = spec.quota == null
     ? "未設目標線"
     : "虛線 = " + spec.lineWord + " " + spec.formatValue(spec.quota) + (spec.unit ? " " + spec.unit : "");
   return (
-    '<figure class="chart">' +
+    '<figure class="chart reveal" data-chart-id="' + esc(id) + '">' +
       "<figcaption>" +
         "<h3>" + esc(spec.label) + "</h3>" +
         '<p class="chart-quota">' + esc(caption) + "</p>" +
       "</figcaption>" +
-      chartSvg(points, spec) +
+      '<div class="chart-canvas"><canvas aria-hidden="true"></canvas></div>' +
       '<p class="summary">' + esc(pointSummary(points, spec)) + "</p>" +
     "</figure>"
   );
@@ -545,12 +484,11 @@ function chartsCard() {
   const first = days[0];
   const last = days[days.length - 1];
   const range = first ? dateLabel(first.date) + "至" + dateLabel(last.date) : "";
-  const charts = nutritionChartMetrics().map((metric) => chartFigure(nutritionPoints(metric), nutritionSpec(metric))).join("");
-
+  const chartsHtml = nutritionChartMetrics().map((metric) => chartFigure(nutritionPoints(metric), nutritionSpec(metric))).join("");
   return (
-    '<section class="card" aria-labelledby="trend-heading">' +
+    '<section class="card" id="trends" aria-labelledby="trend-heading">' +
       '<h2 id="trend-heading">近 ' + days.length + " 日營養走勢</h2>" +
-      '<p class="section-sub">' + esc(range) + "。每項對住上限、目標或者配額。空心點係進行中。撳圖可以睇返當日。</p>" +
+      '<p class="section-sub">' + esc(range) + "。空心點係進行中。撳圖可以睇返當日。</p>" +
       '<div class="chips">' +
         chip(stats.protein, stats.n, "蛋白達標", "good") +
         chip(stats.sugar, stats.n, "糖超上限", "bad") +
@@ -558,7 +496,7 @@ function chartsCard() {
         chip(stats.kcal, stats.n, "熱量貼近", "good") +
       "</div>" +
       '<p class="fine">小結只計 ' + stats.n + " 個完整日，未計進行中。</p>" +
-      '<div class="chart-list">' + charts + "</div>" +
+      '<div class="chart-list">' + chartsHtml + "</div>" +
     "</section>"
   );
 }
@@ -567,13 +505,13 @@ function fitnessTrends() {
   const rows = fitnessSorted();
   const specs = fitnessChartSpecs();
   if (!rows.length || !specs.length) return "";
-  const charts = specs.map((spec) => chartFigure(fitnessPoints(spec.key), spec)).join("");
+  const chartsHtml = specs.map((spec) => chartFigure(fitnessPoints(spec.key), spec)).join("");
   const range = dateLabel(rows[0].date) + "至" + dateLabel(rows[rows.length - 1].date);
   return (
     '<div class="trend-block">' +
       "<h3>活動走勢</h3>" +
-      '<p class="section-sub">' + esc(range) + "，只畫有紀錄嘅日子。活動、運動、站立有目標線；步數同公里未設目標。</p>" +
-      '<div class="chart-list">' + charts + "</div>" +
+      '<p class="section-sub">' + esc(range) + "。只畫有紀錄嘅日子。步數同公里未設目標。</p>" +
+      '<div class="chart-list">' + chartsHtml + "</div>" +
     "</div>"
   );
 }
@@ -582,12 +520,11 @@ function cell(day, metric) {
   if (!Object.prototype.hasOwnProperty.call(day, metric.key)) return '<td class="num">—</td>';
   const quota = snapshot.quotas[metric.quotaKey];
   const value = day[metric.key];
-  const status = classify(metric.key, value, quota, !!day.partial);
-  const mark = markFor(status.tone);
-  const markHtml = mark ? '<span class="flag" aria-hidden="true">' + mark + "</span>" : "";
+  const status = classify(metric.key, value, quota);
   return (
-    '<td class="num tone-' + status.tone + '" title="' + esc(status.label + " " + pctText(value, quota)) + '">' +
-      fmtInt(value) + markHtml +
+    '<td class="num tone-' + status.tone + '">' +
+      fmtInt(value) +
+      '<span class="flag" aria-hidden="true">' + status.emoji + esc(status.mark) + "</span>" +
       '<span class="visually-hidden">，' + esc(status.label) + "</span>" +
     "</td>"
   );
@@ -598,7 +535,7 @@ function daysTable() {
   const head = metrics.map((metric) => (
     '<th scope="col">' + esc(metric.label) + '<span class="unit">' + esc(metric.unit) + "</span></th>"
   )).join("");
-  const rows = [...daysSorted()].reverse().map((day) => {
+  const rows = daysNewest().map((day) => {
     const on = day.date === selectedDate;
     const partial = day.partial ? '<span class="mini">進行中</span>' : "";
     const label = "睇 " + dateLabel(day.date) + (day.partial ? "，進行中" : "");
@@ -613,9 +550,9 @@ function daysTable() {
   }).join("");
 
   return (
-    '<section class="card" aria-labelledby="days-heading">' +
+    '<section class="card reveal" id="days" aria-labelledby="days-heading">' +
       '<h2 id="days-heading">每日數字</h2>' +
-      '<p class="section-sub">最新喺上面。超 = 明顯超標，近 = 接近或者略超，低 = 目標未夠。</p>' +
+      '<p class="legend-line" aria-hidden="true">🔴超 · 🟡近 · 🟢低 · 🟢好</p>' +
       '<p class="scroll-hint">左右滑可以睇晒欄。</p>' +
       '<div class="scroll">' +
         '<table class="sheet days">' +
@@ -640,18 +577,16 @@ function ringSvg(value, goal, color) {
     : '<circle cx="60" cy="60" r="' + radius + '" fill="none" stroke="' + color + '" stroke-width="11" stroke-linecap="round" stroke-dasharray="' + dash + " " + gap + '" transform="rotate(-90 60 60)"></circle>';
   return (
     '<svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">' +
-      '<circle cx="60" cy="60" r="' + radius + '" fill="none" stroke="#efe4d4" stroke-width="11"></circle>' +
+      '<circle cx="60" cy="60" r="' + radius + '" fill="none" stroke="#3a322a" stroke-width="11"></circle>' +
       arc +
-      '<text x="60" y="66" text-anchor="middle" font-size="16" font-weight="700" fill="#241c14" font-family="Georgia, serif">' + esc(pctText(value, goal)) + "</text>" +
+      '<text x="60" y="66" text-anchor="middle" font-size="16" font-weight="700" fill="#f6efe6" font-family="Georgia, serif">' + esc(pctText(value, goal)) + "</text>" +
     "</svg>"
   );
 }
 
-function fitnessCard() {
+function fitnessLiveHtml() {
   const rows = fitnessSorted();
-  if (!rows.length) {
-    return '<section class="card" id="fitness-card"><h2>活動</h2><p>未有活動紀錄。</p></section>';
-  }
+  if (!rows.length) return "<p>未有活動紀錄。</p>";
   const shown = shownFitness();
   const row = shown.row;
   const goals = snapshot.fitnessGoals;
@@ -675,7 +610,6 @@ function fitnessCard() {
       "</figure>"
     );
   }).join("");
-
   const stepsSum = rows.reduce((sum, item) => sum + Number(item.steps), 0);
   const kmSum = rows.reduce((sum, item) => sum + Number(item.km), 0);
   const avgSteps = Math.round(stepsSum / rows.length);
@@ -687,12 +621,31 @@ function fitnessCard() {
   const missingMeal = gaps.noMeal.length
     ? '<p class="fine">活動有記、膳食未有：' + esc(gaps.noMeal.map(dateLabel).join("、")) + "。</p>"
     : "";
+  return (
+    '<p class="section-sub">' + esc(intro) + "</p>" +
+    '<div class="rings">' + rings + "</div>" +
+    '<div class="step-stats">' +
+      "<div><b class=\"num\">" + fmtInt(row.steps) + '</b><span>步</span></div>' +
+      "<div><b class=\"num\">" + fmtKm(row.km) + "</b><span>公里</span></div>" +
+    "</div>" +
+    '<p class="fine">有紀錄 ' + rows.length + " 日，平均 " + fmtInt(avgSteps) + " 步、" + fmtKm(avgKm) + " 公里。目標：活動 " + fmtInt(goals.move) + " kcal、運動 " + fmtInt(goals.exercise) + " 分鐘、站立 " + fmtInt(goals.stand) + " 小時。</p>" +
+    missingFit +
+    missingMeal
+  );
+}
 
+function fitnessCard() {
+  const rows = fitnessSorted();
+  if (!rows.length) {
+    return '<section class="card reveal" id="fitness"><h2>活動</h2><p>未有活動紀錄。</p></section>';
+  }
+  const goals = snapshot.fitnessGoals;
+  const shown = shownFitness();
   const headGoals = RING_META.map((meta) => (
     '<th scope="col">' + esc(meta.label) + '<span class="subhead">/ ' + esc(fmtInt(goals[meta.goalKey])) + "</span></th>"
   )).join("");
   const body = [...rows].reverse().map((item) => {
-    const on = item.date === row.date;
+    const on = shown.row && item.date === shown.row.date;
     const ringCells = RING_META.map((meta) => {
       const value = item[meta.key];
       const goal = goals[meta.goalKey];
@@ -714,17 +667,9 @@ function fitnessCard() {
   }).join("");
 
   return (
-    '<section class="card" id="fitness-card" aria-labelledby="fit-heading">' +
+    '<section class="card" id="fitness" aria-labelledby="fit-heading">' +
       '<h2 id="fit-heading">活動</h2>' +
-      '<p class="section-sub">' + esc(intro) + "</p>" +
-      '<div class="rings">' + rings + "</div>" +
-      '<div class="step-stats">' +
-        "<div><b class=\"num\">" + fmtInt(row.steps) + '</b><span>步</span></div>' +
-        "<div><b class=\"num\">" + fmtKm(row.km) + "</b><span>公里</span></div>" +
-      "</div>" +
-      '<p class="fine">有紀錄 ' + rows.length + " 日，平均 " + fmtInt(avgSteps) + " 步、" + fmtKm(avgKm) + " 公里。目標：活動 " + fmtInt(goals.move) + " kcal、運動 " + fmtInt(goals.exercise) + " 分鐘、站立 " + fmtInt(goals.stand) + " 小時。</p>" +
-      missingFit +
-      missingMeal +
+      '<div id="fitness-live" class="reveal">' + fitnessLiveHtml() + "</div>" +
       fitnessTrends() +
       '<p class="scroll-hint">左右滑可以睇晒欄。</p>' +
       '<div class="scroll">' +
@@ -733,6 +678,45 @@ function fitnessCard() {
           "<tbody>" + body + "</tbody>" +
         "</table>" +
       "</div>" +
+    "</section>"
+  );
+}
+
+function adviceLists() {
+  const block = snapshot.advice || snapshot.comments || {};
+  return {
+    eating: Array.isArray(block.eating) ? block.eating : [],
+    meals: Array.isArray(block.meals) ? block.meals : [],
+  };
+}
+
+function listHtml(items) {
+  if (!items.length) return '<p class="fine">未有文字。</p>';
+  return '<ul class="advice-list">' + items.map((item) => "<li>" + esc(item) + "</li>").join("") + "</ul>";
+}
+
+function adviceLiveHtml(day) {
+  const items = calloutItems(day);
+  const head = '<p class="gap-date">' + esc(dateLabel(day.date)) + (day.partial ? " · 進行中" : "") + "</p>";
+  if (!items.length) return head + "<p>呢日未見明顯超標，亦未見要追嘅目標。</p>";
+  return head + '<ul class="gaps">' + items.map((item) => (
+    "<li>" + badgeHtml(item.status) + "<span>" + esc(item.metric.label) + " " + fmtInt(item.value) + " / " + fmtInt(item.quota) + " " + esc(item.metric.unit) + "</span></li>"
+  )).join("") + "</ul>";
+}
+
+function adviceSection() {
+  const copy = adviceLists();
+  const day = currentDay();
+  return (
+    '<section class="card reveal" id="advice" aria-labelledby="advice-heading">' +
+      '<h2 id="advice-heading">建議</h2>' +
+      "<h3>飲食</h3>" +
+      listHtml(copy.eating) +
+      "<h3>餐單</h3>" +
+      listHtml(copy.meals) +
+      '<h3 id="advice-gap-heading">爭邊樣</h3>' +
+      '<div id="advice-live">' + adviceLiveHtml(day) + "</div>" +
+      fatNote() +
     "</section>"
   );
 }
@@ -754,24 +738,280 @@ function pageTitle(day) {
 }
 
 function view() {
+  pending = [];
   const day = currentDay();
-  return nowBar(day) + dayCard(day) + chartsCard() + daysTable() + fitnessCard();
+  return '<div id="now-slot">' + nowBar(day) + "</div>" + todaySection() + chartsCard() + daysTable() + fitnessCard() + adviceSection();
 }
 
-function render(options) {
-  const settings = options || {};
-  const app = document.querySelector("#app");
-  const scrollY = window.scrollY;
-  app.innerHTML = view();
-  document.title = pageTitle(currentDay());
-  if (settings.restoreDate) {
-    const scope = settings.restoreScope === "fitness" ? "fitness" : "days";
-    const safeDate = window.CSS && CSS.escape ? CSS.escape(settings.restoreDate) : settings.restoreDate;
-    const button = app.querySelector("table." + scope + ' tr[data-select="' + safeDate + '"] button');
-    if (button) button.focus();
+function cssVar(name, fallback) {
+  if (typeof document === "undefined") return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function motionOK() {
+  return typeof window !== "undefined" && window.matchMedia && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function hexAlpha(hex, alpha) {
+  const raw = String(hex).replace("#", "");
+  const num = parseInt(raw, 16);
+  if (!Number.isFinite(num)) return hex;
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+}
+
+function axisLabel(points, point) {
+  const index = points.indexOf(point);
+  const prev = index > 0 ? points[index - 1].date : "";
+  if (!prev || parts(prev).m !== parts(point.date).m) return shortDate(point.date);
+  return String(parts(point.date).d);
+}
+
+function clearCharts() {
+  charts.forEach((entry) => {
+    if (entry.chart) entry.chart.destroy();
+  });
+  charts = [];
+  if (revealObserver) revealObserver.disconnect();
+  revealObserver = null;
+}
+
+function buildChart(figure, item) {
+  const canvas = figure.querySelector("canvas");
+  if (!canvas || typeof Chart === "undefined") {
+    const note = document.createElement("p");
+    note.className = "fine";
+    note.textContent = "圖表未載入。";
+    figure.appendChild(note);
     return;
   }
-  window.scrollTo(0, scrollY);
+  const points = item.points;
+  const spec = item.spec;
+  const card = cssVar("--card", "#241e18");
+  const muted = cssVar("--muted", "#d2c3b2");
+  const line = cssVar("--line", "#3d342b");
+  const ink = cssVar("--ink", "#f6efe6");
+  const datasets = [
+    {
+      data: points.map((point) => point.value),
+      borderColor: spec.color,
+      backgroundColor: hexAlpha(spec.color, 0.18),
+      fill: true,
+      tension: 0.25,
+      pointRadius: points.map((point) => (point.date === selectedDate ? 7 : point.partial ? 5 : 3.5)),
+      pointHoverRadius: points.map((point) => (point.date === selectedDate ? 8 : 5)),
+      pointBackgroundColor: points.map((point) => (point.partial || point.date === selectedDate ? card : spec.color)),
+      pointBorderColor: spec.color,
+      pointBorderWidth: points.map((point) => (point.date === selectedDate ? 3 : 2)),
+      borderWidth: 2.5,
+    },
+  ];
+  if (spec.quota != null) {
+    datasets.push({
+      data: points.map(() => spec.quota),
+      borderColor: muted,
+      borderDash: [5, 4],
+      borderWidth: 1.5,
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      fill: false,
+    });
+  }
+  const chart = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: points.map((point) => axisLabel(points, point)),
+      datasets: datasets,
+    },
+    options: {
+      animation: motionOK() ? { duration: 700, easing: "easeOutQuart" } : false,
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: card,
+          titleColor: ink,
+          bodyColor: ink,
+          borderColor: line,
+          borderWidth: 1,
+          filter: (tip) => tip.datasetIndex === 0,
+          callbacks: {
+            title(tips) {
+              const point = points[tips[0].dataIndex];
+              return dateLabel(point.date) + (point.partial ? " · 進行中" : "");
+            },
+            label(tip) {
+              return spec.label + " " + spec.formatValue(tip.parsed.y) + (spec.unit ? " " + spec.unit : "");
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: muted, maxRotation: 0, autoSkip: true, font: { size: 11 } },
+          grid: { display: false },
+          border: { color: line },
+        },
+        y: {
+          beginAtZero: true,
+          suggestedMax: spec.quota ? spec.quota * 1.16 : undefined,
+          ticks: { color: muted, font: { size: 11 }, maxTicksLimit: 5 },
+          grid: { color: "rgba(246, 239, 230, 0.08)" },
+          border: { display: false },
+        },
+      },
+      onClick(evt) {
+        const hits = chart.getElementsAtEventForMode(evt, "index", { intersect: false }, true);
+        const hit = hits.find((entry) => entry.datasetIndex === 0);
+        if (!hit) return;
+        choose(points[hit.index].date, "chart");
+      },
+    },
+  });
+  charts.push({ chart: chart, points: points, spec: spec });
+}
+
+function highlightCharts() {
+  const card = cssVar("--card", "#241e18");
+  charts.forEach((entry) => {
+    const set = entry.chart.data.datasets[0];
+    set.pointRadius = entry.points.map((point) => (point.date === selectedDate ? 7 : point.partial ? 5 : 3.5));
+    set.pointHoverRadius = entry.points.map((point) => (point.date === selectedDate ? 8 : 5));
+    set.pointBackgroundColor = entry.points.map((point) => (point.partial || point.date === selectedDate ? card : entry.spec.color));
+    set.pointBorderWidth = entry.points.map((point) => (point.date === selectedDate ? 3 : 2));
+    entry.chart.update("none");
+  });
+}
+
+function mountObservers() {
+  const nodes = [];
+  const seen = new Set();
+  document.querySelectorAll(".reveal, .chart[data-chart-id]").forEach((node) => {
+    if (seen.has(node)) return;
+    seen.add(node);
+    nodes.push(node);
+  });
+  const activate = (node) => {
+    node.classList.add("is-in");
+    if (node.dataset.chartId && node.dataset.mounted !== "1") {
+      node.dataset.mounted = "1";
+      const item = pending.find((entry) => entry.id === node.dataset.chartId);
+      if (item) buildChart(node, item);
+    }
+  };
+  if (typeof IntersectionObserver === "undefined") {
+    nodes.forEach(activate);
+    return;
+  }
+  revealObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      activate(entry.target);
+      revealObserver.unobserve(entry.target);
+    });
+  }, { threshold: 0.2, rootMargin: "0px 0px -4% 0px" });
+  nodes.forEach((node) => {
+    if (node.classList.contains("is-in") && !node.dataset.chartId) return;
+    revealObserver.observe(node);
+  });
+}
+
+function cssEscape(value) {
+  if (typeof CSS !== "undefined" && CSS.escape) return CSS.escape(value);
+  return String(value).replace(/"/g, "");
+}
+
+function nearestSlide() {
+  const track = document.querySelector(".day-track");
+  if (!track) return null;
+  const origin = track.getBoundingClientRect().left;
+  let best = null;
+  let bestDist = Infinity;
+  track.querySelectorAll(".day-slide").forEach((slide) => {
+    const dist = Math.abs(slide.getBoundingClientRect().left - origin);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = slide;
+    }
+  });
+  if (!best || bestDist > 16) return null;
+  return best;
+}
+
+function positionDayTrack(behavior) {
+  const track = document.querySelector(".day-track");
+  if (!track) return;
+  const slide = track.querySelector('[data-slide="' + cssEscape(selectedDate) + '"]');
+  if (!slide) return;
+  const left = slide.getBoundingClientRect().left - track.getBoundingClientRect().left + track.scrollLeft;
+  const reduce = behavior === "auto" || !motionOK();
+  scrollLock = true;
+  track.scrollTo({ left: left, behavior: reduce ? "auto" : "smooth" });
+  window.setTimeout(() => {
+    scrollLock = false;
+  }, reduce ? 180 : 720);
+}
+
+function updateChevrons() {
+  const days = daysNewest();
+  const index = days.findIndex((day) => day.date === selectedDate);
+  const newer = document.querySelector("[data-day-step='-1']");
+  const older = document.querySelector("[data-day-step='1']");
+  if (newer) newer.disabled = index <= 0;
+  if (older) older.disabled = index === -1 || index >= days.length - 1;
+}
+
+function bindTrack() {
+  const track = document.querySelector(".day-track");
+  if (!track) return;
+  track.addEventListener("scroll", () => {
+    if (scrollLock) return;
+    window.clearTimeout(scrollTimer);
+    scrollTimer = window.setTimeout(() => {
+      const slide = nearestSlide();
+      if (!slide) return;
+      const date = slide.getAttribute("data-slide");
+      if (date && date !== selectedDate) choose(date, "swipe");
+    }, 90);
+  }, { passive: true });
+  track.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      stepDay(1);
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      stepDay(-1);
+    }
+  });
+}
+
+function stepDay(delta) {
+  const days = daysNewest();
+  const index = days.findIndex((day) => day.date === selectedDate);
+  const next = days[index + delta];
+  if (!next) return;
+  choose(next.date, "chevron");
+}
+
+function render() {
+  const app = document.querySelector("#app");
+  const scrollY = window.scrollY;
+  clearCharts();
+  const html = view();
+  app.innerHTML = html;
+  document.title = pageTitle(currentDay());
+  updateChevrons();
+  bindTrack();
+  mountObservers();
+  window.requestAnimationFrame(() => {
+    positionDayTrack("auto");
+    window.scrollTo(0, scrollY);
+  });
 }
 
 function announce(day) {
@@ -781,29 +1021,83 @@ function announce(day) {
   live.textContent = prefix + "。" + coachNote(day);
 }
 
+function writeHash() {
+  const url = new URL(window.location.href);
+  url.hash = selectedDate === latestDate() ? "" : selectedDate;
+  history.replaceState(null, "", url.pathname + url.search + url.hash);
+}
+
+function syncSelection(source, scope) {
+  const day = currentDay();
+  document.title = pageTitle(day);
+  const now = document.querySelector("#now-slot");
+  if (now) now.innerHTML = nowBar(day);
+  const heading = document.querySelector("#today-heading");
+  const dateLine = document.querySelector("#today-date");
+  if (heading && dateLine && day) {
+    const latest = day.date === latestDate();
+    heading.textContent = latest ? "今日" : dateLabel(day.date);
+    dateLine.textContent = latest
+      ? dateLabel(day.date) + "（" + weekdayChar(day.date) + "）"
+      : "星期" + weekdayChar(day.date);
+  }
+  document.querySelectorAll(".day-slide").forEach((slide) => {
+    const on = slide.getAttribute("data-slide") === day.date;
+    slide.classList.toggle("is-current", on);
+    slide.setAttribute("aria-hidden", on ? "false" : "true");
+  });
+  if (source !== "swipe") positionDayTrack(source === "hash" ? "auto" : "smooth");
+  updateChevrons();
+  const advice = document.querySelector("#advice-live");
+  if (advice) advice.innerHTML = adviceLiveHtml(day);
+  document.querySelectorAll("table.days tbody tr").forEach((row) => {
+    const on = row.getAttribute("data-select") === day.date;
+    row.classList.toggle("is-on", on);
+    if (on) row.setAttribute("aria-current", "true");
+    else row.removeAttribute("aria-current");
+    const button = row.querySelector("button");
+    if (button) button.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+  const fit = document.querySelector("#fitness-live");
+  if (fit) fit.innerHTML = fitnessLiveHtml();
+  const shown = shownFitness();
+  document.querySelectorAll("table.fitness tbody tr").forEach((row) => {
+    const on = !!(shown.row && row.getAttribute("data-select") === shown.row.date);
+    row.classList.toggle("is-on", on);
+    const button = row.querySelector("button");
+    if (button) button.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+  highlightCharts();
+  if (source === "keyboard" && scope) {
+    const table = document.querySelector("table." + scope);
+    const button = table && table.querySelector('tr[data-select="' + cssEscape(day.date) + '"] button');
+    if (button) button.focus();
+  }
+  announce(day);
+}
+
 function choose(date, source, scope) {
   if (!daysSorted().some((day) => day.date === date)) return;
   if (date === selectedDate) return;
   selectedDate = date;
-  const url = new URL(window.location.href);
-  url.hash = date === latestDate() ? "" : date;
-  history.replaceState(null, "", url.pathname + url.search + url.hash);
-  render({
-    restoreDate: source === "keyboard" ? date : null,
-    restoreScope: scope || "days",
-  });
-  announce(currentDay());
+  if (source !== "hash") writeHash();
+  if (!document.querySelector(".day-track")) {
+    render();
+    announce(currentDay());
+    return;
+  }
+  syncSelection(source, scope);
 }
 
 function onAppClick(event) {
+  const step = event.target.closest("[data-day-step]");
+  if (step) {
+    stepDay(Number(step.getAttribute("data-day-step")));
+    return;
+  }
   const latest = event.target.closest("[data-go-latest]");
   if (latest) {
     choose(latestDate(), "button");
-    return;
-  }
-  const chart = event.target.closest("[data-chart-date]");
-  if (chart) {
-    choose(chart.getAttribute("data-chart-date"), "chart");
     return;
   }
   const row = event.target.closest("tr[data-select]");
@@ -812,6 +1106,55 @@ function onAppClick(event) {
     const scope = table && table.classList.contains("fitness") ? "fitness" : "days";
     choose(row.getAttribute("data-select"), event.detail === 0 ? "keyboard" : "row", scope);
   }
+}
+
+function setSheet(open, options) {
+  const fab = document.querySelector(".fab");
+  const layer = document.querySelector("#nav-layer");
+  const sheet = document.querySelector("#nav-sheet");
+  if (!fab || !layer || !sheet) return;
+  layer.classList.toggle("is-open", open);
+  if ("inert" in layer) layer.inert = !open;
+  layer.setAttribute("aria-hidden", open ? "false" : "true");
+  fab.setAttribute("aria-expanded", open ? "true" : "false");
+  fab.setAttribute("aria-label", open ? "關閉目錄" : "開啟目錄");
+  sheet.querySelectorAll("a").forEach((link) => {
+    if (open) link.removeAttribute("tabindex");
+    else link.setAttribute("tabindex", "-1");
+  });
+  const focus = !options || options.focus !== false;
+  if (!focus) return;
+  if (open) {
+    const link = sheet.querySelector("a");
+    if (link) link.focus();
+  } else {
+    fab.focus();
+  }
+}
+
+function bindChrome() {
+  const fab = document.querySelector(".fab");
+  const layer = document.querySelector("#nav-layer");
+  if (!fab || !layer || fab.dataset.bound) return;
+  fab.dataset.bound = "1";
+  fab.addEventListener("click", () => {
+    setSheet(fab.getAttribute("aria-expanded") !== "true", { focus: true });
+  });
+  const backdrop = layer.querySelector(".sheet-backdrop");
+  if (backdrop) backdrop.addEventListener("click", () => setSheet(false, { focus: true }));
+  const sheet = layer.querySelector(".sheet");
+  if (sheet) {
+    sheet.addEventListener("click", (event) => {
+      if (event.target.closest("a")) setSheet(false, { focus: false });
+    });
+  }
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && layer.classList.contains("is-open")) {
+      event.preventDefault();
+      setSheet(false, { focus: true });
+    }
+  });
+  setSheet(false, { focus: false });
 }
 
 function errorCard(title, bodyHtml) {
@@ -825,24 +1168,22 @@ function assertData(data) {
   if (!data.fitnessGoals) throw new Error("data.json 缺少 fitnessGoals");
 }
 
-function applyHash() {
+function dateFromHash() {
   const hash = decodeURIComponent(location.hash.replace(/^#/, ""));
-  const days = daysSorted();
-  const date = days.some((day) => day.date === hash) ? hash : latestDate();
-  if (!date || date === selectedDate) return false;
-  selectedDate = date;
-  return true;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(hash)) return "";
+  return daysSorted().some((day) => day.date === hash) ? hash : "";
 }
 
 function init() {
   const app = document.querySelector("#app");
   app.addEventListener("click", onAppClick);
+  bindChrome();
   window.addEventListener("hashchange", () => {
     if (!snapshot) return;
-    if (applyHash()) {
-      render();
-      announce(currentDay());
-    }
+    const hash = decodeURIComponent(location.hash.replace(/^#/, ""));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(hash)) return;
+    if (!daysSorted().some((day) => day.date === hash)) return;
+    choose(hash, "hash");
   });
   if (location.protocol === "file:") {
     app.innerHTML = errorCard(
@@ -859,7 +1200,7 @@ function init() {
     .then((data) => {
       assertData(data);
       snapshot = data;
-      if (!applyHash()) selectedDate = latestDate();
+      selectedDate = dateFromHash() || latestDate();
       const updated = document.querySelector("#updated");
       if (updated && snapshot.updatedAt) updated.textContent = "更新 " + formatUpdated(snapshot.updatedAt);
       render();
@@ -886,35 +1227,35 @@ function runSelfCheck() {
     if (!condition) throw new Error(message);
   };
   const cases = [
-    ["sugar", 16, 30, true, "good", "未到上限"],
-    ["sugar", 32, 30, false, "warn", "超少少"],
-    ["sugar", 48, 30, false, "bad", "超標"],
-    ["sodium", 2006, 2000, false, "warn", "超少少"],
-    ["sodium", 1900, 2000, false, "warn", "接近上限"],
-    ["sodium", 1642, 2000, false, "good", "未到上限"],
-    ["sodium", 2750, 2000, false, "bad", "超標"],
-    ["protein", 23, 135, true, "progress", "進行中"],
-    ["protein", 89, 135, false, "soft", "未夠"],
-    ["protein", 121, 135, false, "soft", "差少少"],
-    ["protein", 115, 135, false, "soft", "差少少"],
-    ["protein", 136, 135, false, "good", "達標"],
-    ["fiber", 27, 28, false, "good", "就快達標"],
-    ["fiber", 28, 28, false, "good", "達標"],
-    ["fiber", 17, 28, false, "soft", "未夠"],
-    ["fiber", 23, 28, false, "soft", "差少少"],
-    ["kcal", 457, 1950, true, "progress", "進行中"],
-    ["kcal", 1825, 1950, false, "good", "貼近目標"],
-    ["kcal", 2080, 1950, false, "good", "貼近目標"],
-    ["kcal", 2210, 1950, false, "warn", "高少少"],
-    ["kcal", 2530, 1950, false, "bad", "超標"],
-    ["carbs", 220, 190, false, "warn", "高少少"],
-    ["carbs", 168, 190, false, "soft", "低少少"],
-    ["carbs", 228, 190, false, "warn", "高少少"],
-    ["carbs", 34, 190, true, "progress", "進行中"],
+    ["sugar", 16, 30, "good", "好"],
+    ["sugar", 32, 30, "warn", "近"],
+    ["sugar", 48, 30, "bad", "超"],
+    ["sodium", 2006, 2000, "warn", "近"],
+    ["sodium", 1900, 2000, "warn", "近"],
+    ["sodium", 1642, 2000, "good", "好"],
+    ["sodium", 2750, 2000, "bad", "超"],
+    ["protein", 23, 135, "soft", "低"],
+    ["protein", 89, 135, "soft", "低"],
+    ["protein", 121, 135, "warn", "近"],
+    ["protein", 115, 135, "warn", "近"],
+    ["protein", 136, 135, "warn", "近"],
+    ["fiber", 27, 28, "warn", "近"],
+    ["fiber", 28, 28, "warn", "近"],
+    ["fiber", 17, 28, "soft", "低"],
+    ["fiber", 23, 28, "soft", "低"],
+    ["kcal", 457, 1950, "soft", "低"],
+    ["kcal", 1825, 1950, "warn", "近"],
+    ["kcal", 2080, 1950, "warn", "近"],
+    ["kcal", 2210, 1950, "bad", "超"],
+    ["kcal", 2530, 1950, "bad", "超"],
+    ["carbs", 220, 190, "bad", "超"],
+    ["carbs", 168, 190, "warn", "近"],
+    ["carbs", 228, 190, "bad", "超"],
+    ["carbs", 34, 190, "soft", "低"],
   ];
   cases.forEach((item) => {
-    const status = classify(item[0], item[1], item[2], item[3]);
-    expect(status.tone === item[4] && status.label === item[5], item.join(" ") + " -> " + status.tone + " " + status.label);
+    const status = classify(item[0], item[1], item[2]);
+    expect(status.tone === item[3] && status.mark === item[4], item.join(" ") + " -> " + status.tone + " " + status.mark);
   });
   expect(pctText(2006, 2000) === "100.3%", pctText(2006, 2000));
   expect(pctText(457, 1950) === "23%", pctText(457, 1950));
@@ -928,13 +1269,14 @@ function runSelfCheck() {
   expect(stats.protein === 3 && stats.sodium === 6 && stats.sugar === 9 && stats.kcal === 8, JSON.stringify(stats));
   selectedDate = "2026-10-19";
   const todayNote = coachNote(currentDay());
-  expect(todayNote.includes("未完") && todayNote.includes("16"), todayNote);
+  expect(todayNote.includes("進行中") && todayNote.includes("蛋白") && todayNote.includes("低"), todayNote);
+  expect(!todayNote.includes("糖"), todayNote);
   selectedDate = "2026-10-14";
   const highNote = coachNote(currentDay());
-  expect(highNote.includes("130%") && highNote.includes("蛋白達標") && highNote.includes("2,750"), highNote);
+  expect(highNote.includes("超") && highNote.includes("2,750") && highNote.includes("56"), highNote);
   selectedDate = "2026-10-12";
   const midNote = coachNote(currentDay());
-  expect(midNote.includes("差 14 g") && midNote.includes("接近上限") && midNote.includes("差 11 g"), midNote);
+  expect(midNote.includes("纖維") && midNote.includes("低") && midNote.includes("鈉") && midNote.includes("近"), midNote);
   const steps = fitnessSorted().reduce((sum, row) => sum + row.steps, 0);
   const km = fitnessSorted().reduce((sum, row) => sum + row.km, 0);
   expect(steps === 79380, String(steps));
@@ -956,15 +1298,16 @@ function runSelfCheck() {
   expect(specs.find((spec) => spec.key === "move").quota === 360, "move goal");
   expect(specs.find((spec) => spec.key === "steps").quota == null, "steps have no goal");
   expect(specs.find((spec) => spec.key === "km").quota == null, "km has no goal");
-  const sugarSvg = chartSvg(nutritionPoints(metricByKey("sugar")), nutritionSpec(metricByKey("sugar")));
-  expect(sugarSvg.includes(">30</text>") && sugarSvg.includes("stroke-dasharray"), "sugar cap line");
-  expect(sugarSvg.includes("2026-10-19"), "partial day stays on the sugar chart");
-  const stepsSvg = chartSvg(fitnessPoints("steps"), specs.find((spec) => spec.key === "steps"));
-  expect(!stepsSvg.includes("stroke-dasharray"), "steps chart has no goal line");
-  expect((stepsSvg.match(/data-chart-date/g) || []).length === 8, "fitness dates only");
-  expect(!stepsSvg.includes("2026-10-13") && !stepsSvg.includes("2026-10-19"), "no invented fitness days");
-  const moveSvg = chartSvg(fitnessPoints("move"), specs.find((spec) => spec.key === "move"));
-  expect(moveSvg.includes(">360</text>"), "move goal line");
+  const sugarModel = chartModel(nutritionPoints(metricByKey("sugar")), nutritionSpec(metricByKey("sugar")));
+  expect(sugarModel.quota === 30 && sugarModel.dates.indexOf("2026-10-19") !== -1, "sugar series keeps the partial day");
+  const stepsModel = chartModel(fitnessPoints("steps"), specs.find((spec) => spec.key === "steps"));
+  expect(stepsModel.quota == null && stepsModel.dates.length === 8, "fitness dates only");
+  expect(stepsModel.dates.indexOf("2026-10-13") === -1 && stepsModel.dates.indexOf("2026-10-19") === -1, "no invented fitness days");
+  const moveModel = chartModel(fitnessPoints("move"), specs.find((spec) => spec.key === "move"));
+  expect(moveModel.quota === 360, "move goal line");
+  expect(Array.isArray(data.advice.eating) && data.advice.eating.length >= 3, "advice eating");
+  expect(Array.isArray(data.advice.meals) && data.advice.meals.length >= 3, "advice meals");
+  expect(daysNewest()[0].date === "2026-10-19", "newest first");
 }
 
 if (typeof process !== "undefined" && process.argv && process.argv.includes("--check")) {
