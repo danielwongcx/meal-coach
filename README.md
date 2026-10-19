@@ -22,7 +22,9 @@ python3 -m http.server 8080
 
 Open http://localhost:8080/
 
-No build step. Charts use [Chart.js](https://www.chartjs.org/) 4.4.6 (MIT), saved as `chart.umd.min.js`. Each chart animates the first time it scrolls into view. Nutrition trends cover every number in `daily` (熱量、碳水、糖、纖維、蛋白、鈉, plus fat when a row has it). Fitness trends cover 活動、運動、站立、步數, and 公里. Goal lines are drawn only where `quotas` or `fitnessGoals` has a number. Steps and kilometres have no goal line.
+No build step. Charts use [Chart.js](https://www.chartjs.org/) 4.4.6 (MIT), saved as `chart.umd.min.js`. Each chart animates the first time it scrolls into view, drawing left to right along the dates. A line grows as a stroke; a bar chart grows in width from the left, one category after another. `prefers-reduced-motion` skips that animation.
+
+The header button switches dark and light. The choice is stored in `localStorage` (`meal-coach-theme`). With nothing stored, the page follows the system theme. Nutrition trends cover every number in `daily` (熱量、碳水、糖、纖維、蛋白、鈉, plus fat when a row has it). Fitness trends cover 活動、運動、站立、步數, and 公里. Goal lines are drawn only where `quotas` or `fitnessGoals` has a number. Steps and kilometres have no goal line.
 
 The 今日 card swipes sideways through `daily` (newest first). The round button at the bottom right jumps to 今日、走勢、每日、活動、建議. Short tips live in `advice` (`eating` and `meals`). The 爭邊樣 lines are calculated from the day on screen. Protein and fibre ideas live in `foodLists` (`protein`, `fiber`, optional `tips`) and show under 建議 and 補數.
 
