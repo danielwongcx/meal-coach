@@ -999,6 +999,19 @@ code {
   font-weight: 700;
 }
 
+.meal-name {
+  margin: 6px 0 0;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.meal-meta {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .meal-tag {
   display: inline-flex;
   align-items: center;
@@ -1271,6 +1284,9 @@ code {
   display: grid;
   align-items: end;
   justify-items: center;
+  height: 100%;
+  max-height: 100vh;
+  max-height: 100dvh;
   padding: 0;
 }
 
@@ -1285,9 +1301,11 @@ code {
 
 .day-modal-panel {
   position: relative;
+  z-index: 1;
   width: min(720px, 100%);
-  max-height: min(88vh, 900px);
-  margin: 0 0 env(safe-area-inset-bottom);
+  max-height: min(92vh, 900px);
+  max-height: min(92dvh, 900px);
+  margin: 0;
   background: var(--card);
   color: var(--ink);
   border: 1px solid var(--line);
@@ -1296,8 +1314,9 @@ code {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
-  padding: 16px 16px 20px;
+  padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
 }
 
 .day-modal-head {
@@ -1322,8 +1341,16 @@ code {
 }
 
 .day-modal-panel .scroll {
+  flex: 1 1 auto;
   min-height: 0;
+  max-height: calc(100vh - 148px);
+  max-height: calc(100dvh - 148px);
+  overflow-x: auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
   overscroll-behavior: contain;
+  contain: none;
 }
 
 body.modal-open {

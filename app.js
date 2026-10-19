@@ -444,10 +444,15 @@ function fmtAmount(value) {
 
 function mealMacroText(entry) {
   return MEAL_FIELDS.map((field) => {
+    if (!entry || !Object.prototype.hasOwnProperty.call(entry, field.key)) return "";
     const text = fmtAmount(entry[field.key]);
     if (!text) return "";
     return (field.label ? field.label + " " : "") + text + " " + field.unit;
   }).filter(Boolean).join(" · ");
+}
+
+function mealMetaText(entry) {
+  return [entry.time, entry.place].filter(Boolean).join(" · ");
 }
 
 function mealLogHtml(day) {
@@ -456,18 +461,22 @@ function mealLogHtml(day) {
   const count = meals.length ? '<span class="meal-count num">' + meals.length + " 項</span>" : "";
   let body = '<p class="fine">未有逐項紀錄。</p>';
   if (meals.length) {
-    const anyMacro = meals.some((entry) => MEAL_FIELDS.some((field) => fmtAmount(entry[field.key])));
+    const anyMacro = meals.some((entry) => MEAL_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(entry, field.key) && fmtAmount(entry[field.key])));
     const note = anyMacro ? "" : '<p class="fine">逐項營養未分開記，上面係當日總數。</p>';
     body = note + '<ul class="meal-list">' + meals.map((entry) => {
       const meal = entry.meal ? '<span class="meal-tag">' + esc(entry.meal) + "</span>" : "";
+      const meta = mealMetaText(entry);
+      const metaHtml = meta ? '<span class="meal-meta num">' + esc(meta) + "</span>" : "";
+      const top = meal || metaHtml ? '<p class="meal-top">' + meal + metaHtml + "</p>" : "";
       const macros = mealMacroText(entry);
       const macroHtml = macros ? '<p class="meal-macros num">' + esc(macros) + "</p>" : "";
       const extra = entry.note ? '<p class="meal-note">' + esc(entry.note) + "</p>" : "";
       return (
         '<li class="meal-row">' +
-          '<p class="meal-top">' + meal + '<span class="meal-name">' + esc(entry.name) + "</span></p>" +
-          extra +
+          top +
+          '<p class="meal-name">' + esc(entry.name) + "</p>" +
           macroHtml +
+          extra +
         "</li>"
       );
     }).join("") + "</ul>";
@@ -1946,13 +1955,37 @@ function runSelfCheck() {
   expect(daysNewest()[0].date === "2026-10-19", "newest first");
   const logged = daysSorted().find((day) => day.date === "2026-10-19");
   expect(logged.kcal === 1081.5 && logged.partial === true, "oct 19 totals stay");
-  expect(Array.isArray(logged.meals) && logged.meals.some((item) => item.name.includes("蕃薯")) && logged.meals.some((item) => item.name.includes("餃子")), "oct 19 foods");
-  expect(daysSorted().filter((day) => day.date !== "2026-10-19").every((day) => Array.isArray(day.meals) && day.meals.length === 0), "no invented older meals");
+  const mealCounts = {
+    "2026-10-09": 5,
+    "2026-10-10": 4,
+    "2026-10-11": 5,
+    "2026-10-12": 3,
+    "2026-10-13": 4,
+    "2026-10-14": 4,
+    "2026-10-15": 5,
+    "2026-10-16": 4,
+    "2026-10-17": 5,
+    "2026-10-18": 7,
+    "2026-10-19": 5,
+  };
+  daysSorted().forEach((day) => {
+    expect(Array.isArray(day.meals) && day.meals.length === mealCounts[day.date], day.date + " meal count " + (day.meals && day.meals.length));
+    ["kcal", "carbs", "sugar", "fiber", "protein", "sodium"].forEach((key) => {
+      const sum = day.meals.reduce((total, item) => total + Number(item[key] || 0), 0);
+      expect(Math.abs(sum - day[key]) < 0.05, day.date + " " + key + " sum " + sum);
+    });
+  });
+  expect(logged.meals.some((item) => item.meal === "早餐" && item.name.includes("蘋果") && item.name.includes("炒蛋") && item.name.includes("豆漿")), "oct 19 breakfast");
+  expect(logged.meals.some((item) => item.name.includes("Ryvita") && item.kcal === 36.5), "oct 19 ryvita");
+  expect(logged.meals.some((item) => item.name.includes("生菜")), "oct 19 lettuce");
+  expect(logged.meals.some((item) => item.name.includes("蕃薯") && item.kcal === 180), "oct 19 sweet potato");
+  expect(logged.meals.some((item) => item.meal === "午餐" && item.name.includes("餃子") && item.name.includes("醋")), "oct 19 dumplings");
   expect(mealMacroText({ name: "例", kcal: 1081.5, sodium: 749, carbs: 12 }) === "1081.5 kcal · 碳水 12 g · 鈉 749 mg", mealMacroText({ name: "例", kcal: 1081.5, sodium: 749, carbs: 12 }));
   const todayLog = mealLogHtml(logged);
-  expect(todayLog.startsWith('<details class="meal-log" open>') && todayLog.includes("蕃薯") && todayLog.includes("餃子 × 8") && todayLog.includes("醋同麻油醬") && todayLog.includes("逐項營養未分開記"), "today log");
-  const olderLog = mealLogHtml(daysSorted().find((day) => day.date === "2026-10-18"));
-  expect(olderLog.startsWith('<details class="meal-log">') && olderLog.includes("未有逐項紀錄。"), "older log stays closed");
+  expect(todayLog.startsWith('<details class="meal-log" open>') && todayLog.includes("420 kcal") && todayLog.includes("~11:00") && todayLog.includes("屋企") && todayLog.includes("蒸餃子 8 隻") && !todayLog.includes("逐項營養未分開記"), "today log");
+  const olderDay = daysSorted().find((day) => day.date === "2026-10-18");
+  const olderLog = mealLogHtml(olderDay);
+  expect(olderLog.startsWith('<details class="meal-log">') && olderLog.includes("綠豆沙") && olderLog.includes("零食") && olderLog.includes("~21:35"), "older log stays closed");
   const taggedLog = mealLogHtml({ date: "1999-01-01", meals: [{ name: "蛋", meal: "早餐", kcal: 80, protein: 6 }] });
   expect(taggedLog.includes("早餐") && taggedLog.includes("80 kcal") && taggedLog.includes("蛋白 6 g") && taggedLog.startsWith('<details class="meal-log">'), taggedLog);
   const lineAnim = chartAnimations("line", 11);
