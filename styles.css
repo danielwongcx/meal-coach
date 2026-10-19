@@ -809,6 +809,9 @@ code {
   .sheet-backdrop,
   .chevron,
   .meal-log summary::after,
+  .meal-panel,
+  .day-modal-backdrop,
+  .day-modal-panel,
   .row-btn,
   .jump-sheet a,
   body,
@@ -966,8 +969,25 @@ code {
   transition: transform 0.18s ease;
 }
 
-.meal-log[open] summary::after {
+.meal-log.is-open summary::after {
   transform: rotate(-135deg) translateY(-2px);
+}
+
+.meal-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.42s cubic-bezier(0.55, 0.085, 0.68, 0.53), opacity 0.42s cubic-bezier(0.55, 0.085, 0.68, 0.53);
+}
+
+.meal-log.is-open .meal-panel {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.meal-panel-inner {
+  overflow: hidden;
+  min-height: 0;
 }
 
 .meal-count {
@@ -1297,6 +1317,12 @@ code {
   padding: 0;
   background: rgba(0, 0, 0, 0.5);
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.42s cubic-bezier(0.55, 0.085, 0.68, 0.53);
+}
+
+.day-modal.is-in .day-modal-backdrop {
+  opacity: 1;
 }
 
 .day-modal-panel {
@@ -1317,6 +1343,14 @@ code {
   min-height: 0;
   overflow: hidden;
   padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
+  opacity: 0;
+  transform: translateY(18px) scale(0.98);
+  transition: opacity 0.42s cubic-bezier(0.55, 0.085, 0.68, 0.53), transform 0.42s cubic-bezier(0.55, 0.085, 0.68, 0.53);
+}
+
+.day-modal.is-in .day-modal-panel {
+  opacity: 1;
+  transform: none;
 }
 
 .day-modal-head {
@@ -1397,5 +1431,14 @@ body.modal-open {
   .ring-arc,
   .ring-over {
     stroke-dasharray: var(--ring-final);
+  }
+
+  .meal-log[open] .meal-panel,
+  .meal-log.is-open .meal-panel,
+  .day-modal:not([hidden]) .day-modal-backdrop,
+  .day-modal:not([hidden]) .day-modal-panel {
+    opacity: 1;
+    transform: none;
+    grid-template-rows: 1fr;
   }
 }

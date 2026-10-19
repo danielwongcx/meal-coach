@@ -481,10 +481,11 @@ function mealLogHtml(day) {
       );
     }).join("") + "</ul>";
   }
+  const ready = open ? " is-open" : "";
   return (
-    '<details class="meal-log"' + open + ">" +
+    '<details class="meal-log' + ready + '"' + open + ">" +
       '<summary><span>詳細每日記錄</span>' + count + "</summary>" +
-      body +
+      '<div class="meal-panel"><div class="meal-panel-inner">' + body + "</div></div>" +
     "</details>"
   );
 }
@@ -1580,24 +1581,92 @@ function daysModalEl() {
   return document.querySelector("#days-modal");
 }
 
+let daysMotion = 0;
+
 function openDaysModal(opener) {
   const modal = daysModalEl();
   if (!modal) return;
+  daysMotion += 1;
   daysOpener = opener && opener.focus ? opener : document.querySelector("[data-open-days]");
+  if (!modal.hidden && modal.classList.contains("is-in")) {
+    const close = modal.querySelector(".day-modal-close");
+    if (close) close.focus();
+    return;
+  }
   modal.hidden = false;
   document.body.classList.add("modal-open");
+  if (motionOK()) {
+    modal.classList.remove("is-in");
+    void modal.offsetWidth;
+  }
+  modal.classList.add("is-in");
   const close = modal.querySelector(".day-modal-close");
   if (close) close.focus();
 }
 
-function closeDaysModal() {
+function finishDaysClose() {
   const modal = daysModalEl();
   if (!modal || modal.hidden) return;
+  modal.classList.remove("is-in");
   modal.hidden = true;
   document.body.classList.remove("modal-open");
   const opener = daysOpener;
   daysOpener = null;
   if (opener && document.contains(opener)) opener.focus();
+}
+
+function closeDaysModal() {
+  const modal = daysModalEl();
+  if (!modal || modal.hidden) return;
+  if (!motionOK()) {
+    daysMotion += 1;
+    finishDaysClose();
+    return;
+  }
+  const token = ++daysMotion;
+  modal.classList.remove("is-in");
+  const panel = modal.querySelector(".day-modal-panel");
+  let settled = false;
+  const settle = () => {
+    if (settled || token !== daysMotion) return;
+    settled = true;
+    finishDaysClose();
+  };
+  if (panel) {
+    panel.addEventListener("transitionend", (event) => {
+      if (event.target !== panel) return;
+      settle();
+    });
+  }
+  window.setTimeout(settle, 520);
+}
+
+function toggleMealLog(summary, event) {
+  const details = summary.parentElement;
+  if (!details || !motionOK()) return;
+  event.preventDefault();
+  const panel = details.querySelector(".meal-panel");
+  if (!panel) return;
+  const token = String(Number(details.dataset.motion || 0) + 1);
+  details.dataset.motion = token;
+  if (details.classList.contains("is-open")) {
+    details.classList.remove("is-open");
+    let settled = false;
+    const settle = () => {
+      if (settled || details.dataset.motion !== token) return;
+      settled = true;
+      details.open = false;
+    };
+    panel.addEventListener("transitionend", (endEvent) => {
+      if (endEvent.target !== panel) return;
+      settle();
+    });
+    window.setTimeout(settle, 520);
+    return;
+  }
+  details.open = true;
+  void panel.offsetHeight;
+  details.classList.add("is-open");
 }
 
 function daysFocusable() {
@@ -1708,6 +1777,11 @@ function choose(date, source, scope) {
 }
 
 function onAppClick(event) {
+  const summary = event.target.closest(".meal-log > summary");
+  if (summary) {
+    toggleMealLog(summary, event);
+    return;
+  }
   const step = event.target.closest("[data-day-step]");
   if (step) {
     stepDay(Number(step.getAttribute("data-day-step")));
@@ -1809,6 +1883,11 @@ function dateFromHash() {
 function init() {
   const app = document.querySelector("#app");
   app.addEventListener("click", onAppClick);
+  app.addEventListener("toggle", (event) => {
+    const details = event.target;
+    if (!details.classList || !details.classList.contains("meal-log") || motionOK()) return;
+    details.classList.toggle("is-open", details.open);
+  }, true);
   bindChrome();
   bindTheme();
   window.addEventListener("hashchange", () => {
@@ -1982,7 +2061,7 @@ function runSelfCheck() {
   expect(logged.meals.some((item) => item.meal === "午餐" && item.name.includes("餃子") && item.name.includes("醋")), "oct 19 dumplings");
   expect(mealMacroText({ name: "例", kcal: 1081.5, sodium: 749, carbs: 12 }) === "1081.5 kcal · 碳水 12 g · 鈉 749 mg", mealMacroText({ name: "例", kcal: 1081.5, sodium: 749, carbs: 12 }));
   const todayLog = mealLogHtml(logged);
-  expect(todayLog.startsWith('<details class="meal-log" open>') && todayLog.includes("420 kcal") && todayLog.includes("~11:00") && todayLog.includes("屋企") && todayLog.includes("蒸餃子 8 隻") && !todayLog.includes("逐項營養未分開記"), "today log");
+  expect(todayLog.startsWith('<details class="meal-log is-open" open>') && todayLog.includes('class="meal-panel"') && todayLog.includes("420 kcal") && todayLog.includes("~11:00") && todayLog.includes("屋企") && todayLog.includes("蒸餃子 8 隻") && !todayLog.includes("逐項營養未分開記"), "today log");
   const olderDay = daysSorted().find((day) => day.date === "2026-10-18");
   const olderLog = mealLogHtml(olderDay);
   expect(olderLog.startsWith('<details class="meal-log">') && olderLog.includes("綠豆沙") && olderLog.includes("零食") && olderLog.includes("~21:35"), "older log stays closed");
