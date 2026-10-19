@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-10-19T12:00:00+08:00",
+  "updatedAt": "2026-10-19T17:10:00+08:00",
   "quotas": {
     "kcal": 1950,
     "carbs_g": 190,
@@ -20,7 +20,7 @@
     {"date":"2026-10-16","kcal":2080,"carbs":169,"sugar":35,"fiber":19,"protein":115,"sodium":2110},
     {"date":"2026-10-17","kcal":1830,"carbs":177,"sugar":36,"fiber":17,"protein":102,"sodium":2221},
     {"date":"2026-10-18","kcal":2085,"carbs":226,"sugar":49,"fiber":27,"protein":96,"sodium":2006},
-    {"date":"2026-10-19","kcal":457,"carbs":34,"sugar":16,"fiber":7,"protein":23,"sodium":219,"partial":true}
+    {"date":"2026-10-19","kcal":1081.5,"carbs":122.1,"sugar":28.3,"fiber":16.5,"protein":48.1,"sodium":749,"partial":true}
   ],
   "fitness": [
     {"date":"2026-10-09","move":409,"exercise":36,"stand":5,"steps":10719,"km":7.74},
