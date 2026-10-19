@@ -378,7 +378,7 @@ function metricRows(day) {
           '<span class="metric-value num">' + esc(valueText) + "</span>" +
         "</div>" +
         '<div class="track" role="meter" aria-valuemin="0" aria-valuemax="' + esc(quota) + '" aria-valuenow="' + esc(value) + '" aria-valuetext="' + esc(described) + '">' +
-          '<span class="fill tone-' + status.tone + over + '" style="width:' + width + '%"></span>' +
+          '<span class="fill tone-' + status.tone + over + '" style="--fill:' + width + '%"></span>' +
         "</div>" +
         '<div class="metric-foot">' +
           badgeHtml(status) +
@@ -487,8 +487,13 @@ function chartsCard() {
   const chartsHtml = nutritionChartMetrics().map((metric) => chartFigure(nutritionPoints(metric), nutritionSpec(metric))).join("");
   return (
     '<section class="card" id="trends" aria-labelledby="trend-heading">' +
-      '<h2 id="trend-heading">近 ' + days.length + " 日營養走勢</h2>" +
-      '<p class="section-sub">' + esc(range) + "。空心點係進行中。撳圖可以睇返當日。</p>" +
+      '<div class="section-head">' +
+        "<div>" +
+          '<h2 id="trend-heading">近 ' + days.length + " 日營養走勢</h2>" +
+          '<p class="section-sub">' + esc(range) + "。空心點係進行中。撳圖可以睇返當日。</p>" +
+        "</div>" +
+        '<button type="button" class="text-btn" data-open-days>每日數字</button>' +
+      "</div>" +
       '<div class="chips">' +
         chip(stats.protein, stats.n, "蛋白達標", "good") +
         chip(stats.sugar, stats.n, "糖超上限", "bad") +
@@ -530,7 +535,7 @@ function cell(day, metric) {
   );
 }
 
-function daysTable() {
+function daysTableBody() {
   const metrics = METRICS.filter((metric) => daysSorted().some((day) => Object.prototype.hasOwnProperty.call(day, metric.key)));
   const head = metrics.map((metric) => (
     '<th scope="col">' + esc(metric.label) + '<span class="unit">' + esc(metric.unit) + "</span></th>"
@@ -548,19 +553,30 @@ function daysTable() {
       "</tr>"
     );
   }).join("");
-
   return (
-    '<section class="card reveal" id="days" aria-labelledby="days-heading">' +
-      '<h2 id="days-heading">每日數字</h2>' +
-      '<p class="legend-line" aria-hidden="true">🔴超 · 🟡近 · 🟢低 · 🟢好</p>' +
-      '<p class="scroll-hint">左右滑可以睇晒欄。</p>' +
-      '<div class="scroll">' +
-        '<table class="sheet days">' +
-          "<thead><tr><th scope=\"col\">日期</th>" + head + "</tr></thead>" +
-          "<tbody>" + rows + "</tbody>" +
-        "</table>" +
+    '<div class="scroll">' +
+      '<table class="sheet days">' +
+        "<thead><tr><th scope=\"col\">日期</th>" + head + "</tr></thead>" +
+        "<tbody>" + rows + "</tbody>" +
+      "</table>" +
+    "</div>"
+  );
+}
+
+function daysModal() {
+  return (
+    '<div class="day-modal" id="days-modal" hidden>' +
+      '<button type="button" class="day-modal-backdrop" data-close-days aria-label="關閉每日數字"></button>' +
+      '<div class="day-modal-panel" role="dialog" aria-modal="true" aria-labelledby="days-heading">' +
+        '<div class="day-modal-head">' +
+          '<h2 id="days-heading">每日數字</h2>' +
+          '<button type="button" class="day-modal-close" data-close-days aria-label="關閉">×</button>' +
+        "</div>" +
+        '<p class="legend-line" aria-hidden="true">🔴超 · 🟡近 · 🟢低 · 🟢好</p>' +
+        '<p class="scroll-hint">左右滑可以睇晒欄。撳日期可以睇返當日。</p>' +
+        daysTableBody() +
       "</div>" +
-    "</section>"
+    "</div>"
   );
 }
 
@@ -796,7 +812,7 @@ function pageTitle(day) {
 function view() {
   pending = [];
   const day = currentDay();
-  return '<div id="now-slot">' + nowBar(day) + "</div>" + todaySection() + chartsCard() + daysTable() + fitnessCard() + adviceSection() + foodSection();
+  return '<div id="now-slot">' + nowBar(day) + "</div>" + todaySection() + chartsCard() + fitnessCard() + adviceSection() + foodSection() + daysModal();
 }
 
 function cssVar(name, fallback) {
@@ -828,6 +844,7 @@ function axisLabel(points, point) {
 
 function clearCharts() {
   charts.forEach((entry) => {
+    if (entry.raf) cancelAnimationFrame(entry.raf);
     if (entry.chart) entry.chart.destroy();
   });
   charts = [];
@@ -835,8 +852,25 @@ function clearCharts() {
   revealObserver = null;
 }
 
+const CHART_EASE = "easeInQuad";
+const REVEAL_MS = 1100;
+
+function revealEase(t) {
+  const clamped = Math.min(1, Math.max(0, Number(t) || 0));
+  const effects = typeof Chart !== "undefined" && Chart.helpers && Chart.helpers.easingEffects;
+  const ease = effects && effects[CHART_EASE];
+  return ease ? ease(clamped) : clamped * clamped;
+}
+
+function revealSlot(index, count) {
+  const n = Math.max(Number(count) || 1, 1);
+  const start = REVEAL_MS * Math.sqrt(Math.max(0, index) / n);
+  const end = REVEAL_MS * Math.sqrt(Math.min(index + 1, n) / n);
+  return { delay: start, duration: Math.max(end - start, 48) };
+}
+
 function chartAnimations(type, count) {
-  const step = 900 / Math.max(Number(count) || 1, 1);
+  const slot = (ctx) => revealSlot(ctx && ctx.index ? ctx.index : 0, count);
   if (type === "bar") {
     return {
       y: { duration: 0 },
@@ -844,8 +878,8 @@ function chartAnimations(type, count) {
       height: { duration: 0 },
       x: {
         type: "number",
-        easing: "easeOutQuart",
-        duration: step,
+        easing: CHART_EASE,
+        duration: (ctx) => slot(ctx).duration,
         from(ctx) {
           if (!ctx || ctx.type !== "data") return undefined;
           const el = ctx.chart.getDatasetMeta(ctx.datasetIndex).data[ctx.index];
@@ -855,18 +889,18 @@ function chartAnimations(type, count) {
         delay(ctx) {
           if (!ctx || ctx.type !== "data" || ctx.xStarted) return 0;
           ctx.xStarted = true;
-          return ctx.index * step;
+          return slot(ctx).delay;
         },
       },
       width: {
         type: "number",
-        easing: "easeOutQuart",
-        duration: Math.max(step, 160),
+        easing: CHART_EASE,
+        duration: (ctx) => Math.max(slot(ctx).duration, 160),
         from: 0,
         delay(ctx) {
           if (!ctx || ctx.type !== "data" || ctx.wStarted) return 0;
           ctx.wStarted = true;
-          return ctx.index * step;
+          return slot(ctx).delay;
         },
       },
     };
@@ -881,27 +915,131 @@ function chartAnimations(type, count) {
   return {
     x: {
       type: "number",
-      easing: "linear",
-      duration: step,
+      easing: CHART_EASE,
+      duration: (ctx) => slot(ctx).duration,
       from: NaN,
       delay(ctx) {
         if (!ctx || ctx.type !== "data" || ctx.xStarted) return 0;
         ctx.xStarted = true;
-        return ctx.index * step;
+        return slot(ctx).delay;
       },
     },
     y: {
       type: "number",
-      easing: "linear",
-      duration: step,
+      easing: CHART_EASE,
+      duration: (ctx) => slot(ctx).duration,
       from: previousY,
       delay(ctx) {
         if (!ctx || ctx.type !== "data" || ctx.yStarted) return 0;
         ctx.yStarted = true;
-        return ctx.index * step;
+        return slot(ctx).delay;
       },
     },
   };
+}
+
+const ltrRevealPlugin = {
+  id: "ltrReveal",
+  beforeDatasetsDraw(chart) {
+    chart.$ltrClip = false;
+    if (chart.$ltr == null) chart.$ltr = motionOK() ? 0 : 1;
+    if (chart.$ltr >= 1) return;
+    const area = chart.chartArea;
+    if (!area) return;
+    const ctx = chart.ctx;
+    chart.$ltrClip = true;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(area.left, area.top - 20, Math.max(0, (area.right - area.left) * chart.$ltr), area.bottom - area.top + 40);
+    ctx.clip();
+  },
+  afterDatasetsDraw(chart) {
+    if (!chart.$ltrClip) return;
+    chart.ctx.restore();
+    chart.$ltrClip = false;
+  },
+};
+
+function registerLtrPlugin() {
+  if (typeof Chart === "undefined" || registerLtrPlugin.done) return;
+  Chart.register(ltrRevealPlugin);
+  registerLtrPlugin.done = true;
+}
+
+function playChart(entry) {
+  if (!entry || !entry.chart) return;
+  if (entry.raf) cancelAnimationFrame(entry.raf);
+  entry.raf = 0;
+  const chart = entry.chart;
+  if (!motionOK()) {
+    chart.$ltr = 1;
+    chart.draw();
+    return;
+  }
+  const started = performance.now();
+  chart.$ltr = 0;
+  chart.draw();
+  const frame = (now) => {
+    const t = Math.min(1, (now - started) / REVEAL_MS);
+    chart.$ltr = revealEase(t);
+    chart.draw();
+    if (t < 1) entry.raf = requestAnimationFrame(frame);
+    else {
+      chart.$ltr = 1;
+      entry.raf = 0;
+      chart.draw();
+    }
+  };
+  entry.raf = requestAnimationFrame(frame);
+}
+
+function parkChart(entry) {
+  if (!entry || !entry.chart) return;
+  if (entry.raf) cancelAnimationFrame(entry.raf);
+  entry.raf = 0;
+  if (!motionOK()) return;
+  entry.chart.$ltr = 0;
+  entry.chart.draw();
+}
+
+function playTodayBars(section) {
+  if (!section) return;
+  const slides = section.querySelectorAll(".day-slide");
+  if (!motionOK()) {
+    section.classList.add("bars-play");
+    section.querySelectorAll(".fill").forEach((el) => {
+      el.style.transition = "none";
+      el.style.width = el.style.getPropertyValue("--fill") || "0%";
+    });
+    return;
+  }
+  section.classList.remove("bars-play");
+  slides.forEach((slide) => {
+    slide.querySelectorAll(".fill").forEach((el) => {
+      el.style.transition = "none";
+      el.style.width = "0%";
+    });
+  });
+  section.getBoundingClientRect();
+  slides.forEach((slide) => {
+    const bars = slide.querySelectorAll(".fill");
+    const count = bars.length || 1;
+    bars.forEach((el, index) => {
+      const slot = revealSlot(index, count);
+      el.style.transition = "width " + Math.max(slot.duration, 180) + "ms cubic-bezier(0.55, 0.085, 0.68, 0.53) " + slot.delay + "ms";
+      el.style.width = el.style.getPropertyValue("--fill") || "0%";
+    });
+  });
+  section.classList.add("bars-play");
+}
+
+function resetTodayBars(section) {
+  if (!section || !motionOK()) return;
+  section.classList.remove("bars-play");
+  section.querySelectorAll(".fill").forEach((el) => {
+    el.style.transition = "none";
+    el.style.width = "0%";
+  });
 }
 
 function themeName() {
@@ -1049,8 +1187,7 @@ function buildChart(figure, item) {
       datasets: datasets,
     },
     options: {
-      animation: motionOK() ? { duration: 900, easing: "linear" } : false,
-      animations: motionOK() ? chartAnimations("line", points.length) : { x: { duration: 0 }, y: { duration: 0 } },
+      animation: false,
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
@@ -1096,7 +1233,8 @@ function buildChart(figure, item) {
       },
     },
   });
-  charts.push({ chart: chart, points: points, spec: spec });
+  chart.$ltr = motionOK() ? 0 : 1;
+  charts.push({ chart: chart, points: points, spec: spec, node: figure, raf: 0 });
 }
 
 function highlightCharts() {
@@ -1106,37 +1244,58 @@ function highlightCharts() {
   });
 }
 
+function mountChart(node) {
+  if (!node.dataset.chartId || node.dataset.mounted === "1") {
+    return charts.find((entry) => entry.node === node);
+  }
+  node.dataset.mounted = "1";
+  const item = pending.find((entry) => entry.id === node.dataset.chartId);
+  if (item) buildChart(node, item);
+  return charts.find((entry) => entry.node === node);
+}
+
 function mountObservers() {
+  registerLtrPlugin();
   const nodes = [];
   const seen = new Set();
-  document.querySelectorAll(".reveal, .chart[data-chart-id]").forEach((node) => {
+  document.querySelectorAll(".reveal, .chart[data-chart-id], #today").forEach((node) => {
     if (seen.has(node)) return;
     seen.add(node);
     nodes.push(node);
   });
-  const activate = (node) => {
+  const show = (node) => {
     node.classList.add("is-in");
-    if (node.dataset.chartId && node.dataset.mounted !== "1") {
-      node.dataset.mounted = "1";
-      const item = pending.find((entry) => entry.id === node.dataset.chartId);
-      if (item) buildChart(node, item);
+    if (node.dataset.chartId && node.dataset.playing !== "1") {
+      node.dataset.playing = "1";
+      playChart(mountChart(node));
+    }
+    if (node.id === "today" && node.dataset.bars !== "1") {
+      node.dataset.bars = "1";
+      playTodayBars(node);
+    }
+  };
+  const hide = (node) => {
+    if (node.dataset.chartId) {
+      node.dataset.playing = "";
+      parkChart(charts.find((entry) => entry.node === node));
+    }
+    if (node.id === "today") {
+      node.dataset.bars = "";
+      resetTodayBars(node);
     }
   };
   if (typeof IntersectionObserver === "undefined") {
-    nodes.forEach(activate);
+    nodes.forEach(show);
     return;
   }
   revealObserver = new IntersectionObserver((entries) => {
     entries.forEach((entry) => {
-      if (!entry.isIntersecting) return;
-      activate(entry.target);
-      revealObserver.unobserve(entry.target);
+      const visible = entry.isIntersecting && entry.intersectionRatio > 0;
+      if (visible) show(entry.target);
+      else if (entry.intersectionRatio === 0) hide(entry.target);
     });
-  }, { threshold: 0.2, rootMargin: "0px 0px -4% 0px" });
-  nodes.forEach((node) => {
-    if (node.classList.contains("is-in") && !node.dataset.chartId) return;
-    revealObserver.observe(node);
-  });
+  }, { threshold: [0, 0.15], rootMargin: "0px 0px -4% 0px" });
+  nodes.forEach((node) => revealObserver.observe(node));
 }
 
 function cssEscape(value) {
@@ -1240,7 +1399,62 @@ function announce(day) {
 }
 
 function sectionHash(hash) {
-  return /^(today|trends|days|fitness|advice|foods)$/.test(hash);
+  return /^(today|trends|fitness|advice|foods)$/.test(hash);
+}
+
+let daysOpener = null;
+
+function daysModalEl() {
+  return document.querySelector("#days-modal");
+}
+
+function openDaysModal(opener) {
+  const modal = daysModalEl();
+  if (!modal) return;
+  daysOpener = opener && opener.focus ? opener : document.querySelector("[data-open-days]");
+  modal.hidden = false;
+  document.body.classList.add("modal-open");
+  const close = modal.querySelector(".day-modal-close");
+  if (close) close.focus();
+}
+
+function closeDaysModal() {
+  const modal = daysModalEl();
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  document.body.classList.remove("modal-open");
+  const opener = daysOpener;
+  daysOpener = null;
+  if (opener && document.contains(opener)) opener.focus();
+}
+
+function daysFocusable() {
+  const modal = daysModalEl();
+  if (!modal) return [];
+  return [...modal.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")].filter((el) => !el.disabled && el.getAttribute("aria-hidden") !== "true");
+}
+
+function trapDaysModal(event) {
+  const modal = daysModalEl();
+  if (!modal || modal.hidden) return false;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeDaysModal();
+    return true;
+  }
+  if (event.key !== "Tab") return false;
+  const list = daysFocusable();
+  if (!list.length) return false;
+  const first = list[0];
+  const last = list[list.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+  return false;
 }
 
 function writeHash() {
@@ -1326,6 +1540,14 @@ function onAppClick(event) {
     choose(latestDate(), "button");
     return;
   }
+  if (event.target.closest("[data-open-days]")) {
+    openDaysModal(event.target.closest("[data-open-days]"));
+    return;
+  }
+  if (event.target.closest("[data-close-days]")) {
+    closeDaysModal();
+    return;
+  }
   const row = event.target.closest("tr[data-select]");
   if (row) {
     const table = row.closest("table");
@@ -1375,6 +1597,7 @@ function bindChrome() {
     });
   }
   document.addEventListener("keydown", (event) => {
+    if (trapDaysModal(event)) return;
     if (event.key === "Escape" && layer.classList.contains("is-open")) {
       event.preventDefault();
       setSheet(false, { focus: true });
@@ -1413,6 +1636,10 @@ function init() {
   window.addEventListener("hashchange", () => {
     if (!snapshot) return;
     const hash = decodeURIComponent(location.hash.replace(/^#/, ""));
+    if (hash === "days") {
+      openDaysModal(document.querySelector("[data-open-days]"));
+      return;
+    }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(hash)) return;
     if (!daysSorted().some((day) => day.date === hash)) return;
     choose(hash, "hash");
@@ -1435,8 +1662,10 @@ function init() {
       selectedDate = dateFromHash() || latestDate();
       const updated = document.querySelector("#updated");
       if (updated && snapshot.updatedAt) updated.textContent = "更新 " + formatUpdated(snapshot.updatedAt);
+      const openDays = decodeURIComponent(location.hash.replace(/^#/, "")) === "days";
       render();
       writeHash();
+      if (openDays) openDaysModal(document.querySelector("[data-open-days]"));
     })
     .catch((error) => {
       console.error(error);
@@ -1549,12 +1778,18 @@ function runSelfCheck() {
   const lineAnim = chartAnimations("line", 11);
   expect(Number.isNaN(lineAnim.x.from), "line starts hidden and draws across");
   expect(typeof lineAnim.y.from === "function", "line y follows the previous point");
+  expect(lineAnim.x.easing === "easeInQuad" && lineAnim.y.easing === "easeInQuad", "line eases in");
+  expect(Math.abs(revealEase(0.5) - 0.25) < 0.001, "easeInQuad is slow at the start");
   const early = { type: "data", index: 1 };
   const later = { type: "data", index: 4 };
   expect(lineAnim.x.delay(later) > lineAnim.x.delay(early), "later points wait so the stroke moves left to right");
+  const earlySlot = revealSlot(1, 11);
+  const laterSlot = revealSlot(8, 11);
+  expect(laterSlot.duration < earlySlot.duration, "the stroke speeds up");
   const barAnim = chartAnimations("bar", 8);
   expect(barAnim.height.duration === 0 && barAnim.y.duration === 0 && barAnim.base.duration === 0, "bars do not grow upward");
   expect(barAnim.width.from === 0, "bars grow in width");
+  expect(barAnim.width.easing === "easeInQuad", "bars ease in");
   expect(barAnim.width.delay({ type: "data", index: 3 }) > barAnim.width.delay({ type: "data", index: 0 }), "bars progress left to right");
 }
 
