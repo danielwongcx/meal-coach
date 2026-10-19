@@ -704,6 +704,44 @@ function adviceLiveHtml(day) {
   )).join("") + "</ul>";
 }
 
+function foodItems(key) {
+  const lists = snapshot.foodLists || {};
+  const value = lists[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function foodGroup(title, items) {
+  if (!items.length) return "";
+  return (
+    '<div class="food-col">' +
+      '<h3 class="food-title">' + title + "</h3>" +
+      listHtml(items) +
+    "</div>"
+  );
+}
+
+function foodSection() {
+  const protein = foodItems("protein");
+  const fiber = foodItems("fiber");
+  const tips = foodItems("tips");
+  if (!protein.length && !fiber.length) return "";
+  const quotas = snapshot.quotas || {};
+  const tipHtml = tips.length
+    ? '<ul class="food-tips">' + tips.map((item) => "<li>" + esc(item) + "</li>").join("") + "</ul>"
+    : "";
+  return (
+    '<section class="card reveal" id="foods" aria-labelledby="foods-heading">' +
+      '<h2 id="foods-heading">補數</h2>' +
+      '<p class="section-sub">蛋白 ' + fmtInt(quotas.protein_g) + " g · 纖維 " + fmtInt(quotas.fiber_g) + " g。屋企同黃埔出面都得。</p>" +
+      '<div class="food-grid">' +
+        foodGroup("🍗蛋白", protein) +
+        foodGroup("🌿纖維", fiber) +
+      "</div>" +
+      tipHtml +
+    "</section>"
+  );
+}
+
 function adviceSection() {
   const copy = adviceLists();
   const day = currentDay();
@@ -717,7 +755,25 @@ function adviceSection() {
       '<h3 id="advice-gap-heading">爭邊樣</h3>' +
       '<div id="advice-live">' + adviceLiveHtml(day) + "</div>" +
       fatNote() +
+      '<h3>補邊樣</h3>' +
+      '<p class="section-sub">蛋白同纖維最難達標。<a href="#foods">睇晒可以食嘅</a>。</p>' +
+      foodPeek() +
     "</section>"
+  );
+}
+
+function foodPeek() {
+  const protein = foodItems("protein").slice(0, 4);
+  const fiber = foodItems("fiber").slice(0, 3);
+  if (!protein.length && !fiber.length) return "";
+  const line = (mark, items) => (
+    "<li><span aria-hidden=\"true\">" + mark + "</span> " + esc(items.join("、")) + "</li>"
+  );
+  return (
+    '<ul class="advice-list food-peek">' +
+      (protein.length ? line("🍗", protein) : "") +
+      (fiber.length ? line("🌿", fiber) : "") +
+    "</ul>"
   );
 }
 
@@ -740,7 +796,7 @@ function pageTitle(day) {
 function view() {
   pending = [];
   const day = currentDay();
-  return '<div id="now-slot">' + nowBar(day) + "</div>" + todaySection() + chartsCard() + daysTable() + fitnessCard() + adviceSection();
+  return '<div id="now-slot">' + nowBar(day) + "</div>" + todaySection() + chartsCard() + daysTable() + fitnessCard() + adviceSection() + foodSection();
 }
 
 function cssVar(name, fallback) {
@@ -1022,7 +1078,7 @@ function announce(day) {
 }
 
 function sectionHash(hash) {
-  return /^(today|trends|days|fitness|advice)$/.test(hash);
+  return /^(today|trends|days|fitness|advice|foods)$/.test(hash);
 }
 
 function writeHash() {
@@ -1321,6 +1377,11 @@ function runSelfCheck() {
   expect(moveModel.quota === 360, "move goal line");
   expect(Array.isArray(data.advice.eating) && data.advice.eating.length >= 3, "advice eating");
   expect(Array.isArray(data.advice.meals) && data.advice.meals.length >= 3, "advice meals");
+  expect(Array.isArray(data.foodLists.protein) && data.foodLists.protein.length >= 8, "protein foods");
+  expect(Array.isArray(data.foodLists.fiber) && data.foodLists.fiber.length >= 6, "fiber foods");
+  expect(data.foodLists.protein.some((item) => item.includes("豆漿")) && data.foodLists.protein.some((item) => item.includes("黃埔")), "protein examples");
+  expect(data.foodLists.fiber.some((item) => item.includes("菜心")) && data.foodLists.fiber.some((item) => item.includes("Ryvita")), "fiber examples");
+  expect(Array.isArray(data.foodLists.tips) && data.foodLists.tips.some((item) => item.includes("甜果")), "fiber sugar tip");
   expect(daysNewest()[0].date === "2026-10-19", "newest first");
 }
 

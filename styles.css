@@ -149,7 +149,8 @@ h2 {
 #trends,
 #days,
 #fitness,
-#advice {
+#advice,
+#foods {
   scroll-margin-top: 16px;
 }
 
@@ -627,7 +628,8 @@ code {
 }
 
 @media (min-width: 700px) {
-  .chart-list {
+  .chart-list,
+  .food-grid {
     grid-template-columns: 1fr 1fr;
   }
 }
@@ -797,8 +799,44 @@ code {
   gap: 8px;
 }
 
-#advice h3 {
+#advice h3,
+.food-title {
   margin-top: 18px;
+}
+
+.food-grid {
+  display: grid;
+  gap: 4px 16px;
+}
+
+.food-title {
+  margin-bottom: 0;
+}
+
+.food-col .advice-list li {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.food-tips {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.food-tips li {
+  margin: 0 0 6px;
+}
+
+.food-peek li {
+  line-height: 1.45;
+}
+
+#advice a {
+  color: var(--link);
 }
 
 .gap-date {
