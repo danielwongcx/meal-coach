@@ -26,7 +26,7 @@ No build step. Charts use [Chart.js](https://www.chartjs.org/) 4.4.6 (MIT), save
 
 The header button switches dark and light. The choice is stored in `localStorage` (`meal-coach-theme`). With nothing stored, the page follows the system theme. Nutrition trends cover every number in `daily` (熱量、碳水、糖、纖維、蛋白、鈉, plus fat when a row has it). Fitness trends cover 活動、運動、站立、步數, and 公里. Goal lines are drawn only where `quotas` or `fitnessGoals` has a number. Steps and kilometres have no goal line.
 
-The 今日 card swipes sideways through `daily` (newest first). The round button at the bottom right jumps to 今日、走勢、活動、建議、補數. 每日數字 opens from the button in 近日走勢, in a dialog you can close with the X, the backdrop, or Escape. Short tips live in `advice` (`eating` and `meals`). The 爭邊樣 lines are calculated from the day on screen. Protein and fibre ideas live in `foodLists` (`protein`, `fiber`, optional `tips`) and show under 建議 and 補數.
+The 今日 card swipes sideways through `daily` (newest first). Under that card, 詳細每日記錄 opens the foods logged for the day on screen. It starts open on the latest day and closed on older days. Each `daily` row can include `meals`: `{ name, meal?, note?, kcal?, carbs?, sugar?, fiber?, protein?, fat?, sodium? }`. Leave `meals` as `[]` when the foods were not written down. The round button at the bottom right jumps to 今日、走勢、活動、建議、補數. 每日數字 opens from the button in 近日走勢, in a dialog you can close with the X, the backdrop, or Escape. Short tips live in `advice` (`eating` and `meals`). The 爭邊樣 lines are calculated from the day on screen. Protein and fibre ideas live in `foodLists` (`protein`, `fiber`, optional `tips`) and show under 建議 and 補數.
 
 A day can be opened directly with a hash, for example `http://localhost:8080/#2026-10-14`. Section links (`#advice` and the others) do not change the selected day.
 
@@ -64,7 +64,7 @@ Do not commit API keys, OAuth tokens, or a service-account file.
     "sodium_mg": 2000
   },
   "daily": [
-    {"date":"2026-10-19","kcal":457,"carbs":34,"sugar":16,"fiber":7,"protein":23,"sodium":219,"partial":true}
+    {"date":"2026-10-19","kcal":457,"carbs":34,"sugar":16,"fiber":7,"protein":23,"sodium":219,"partial":true,"meals":[]}
   ],
   "fitness": [
     {"date":"2026-10-17","move":524,"exercise":30,"stand":9,"steps":8421,"km":6.6}

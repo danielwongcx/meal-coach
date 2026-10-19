@@ -10,17 +10,17 @@
     "sodium_mg": 2000
   },
   "daily": [
-    {"date":"2026-10-09","kcal":1825,"carbs":220,"sugar":48,"fiber":23,"protein":89,"sodium":1642},
-    {"date":"2026-10-10","kcal":1765,"carbs":186,"sugar":32,"fiber":18,"protein":79,"sodium":2531},
-    {"date":"2026-10-11","kcal":1810,"carbs":191,"sugar":45,"fiber":28,"protein":115,"sodium":1532},
-    {"date":"2026-10-12","kcal":1830,"carbs":168,"sugar":25,"fiber":17,"protein":121,"sodium":1900},
-    {"date":"2026-10-13","kcal":2030,"carbs":209,"sugar":36,"fiber":26,"protein":136,"sodium":1713},
-    {"date":"2026-10-14","kcal":2530,"carbs":228,"sugar":56,"fiber":30,"protein":154,"sodium":2750},
-    {"date":"2026-10-15","kcal":2210,"carbs":179,"sugar":37,"fiber":25,"protein":160,"sodium":2221},
-    {"date":"2026-10-16","kcal":2080,"carbs":169,"sugar":35,"fiber":19,"protein":115,"sodium":2110},
-    {"date":"2026-10-17","kcal":1830,"carbs":177,"sugar":36,"fiber":17,"protein":102,"sodium":2221},
-    {"date":"2026-10-18","kcal":2085,"carbs":226,"sugar":49,"fiber":27,"protein":96,"sodium":2006},
-    {"date":"2026-10-19","kcal":1081.5,"carbs":122.1,"sugar":28.3,"fiber":16.5,"protein":48.1,"sodium":749,"partial":true}
+    {"date":"2026-10-09","kcal":1825,"carbs":220,"sugar":48,"fiber":23,"protein":89,"sodium":1642,"meals":[]},
+    {"date":"2026-10-10","kcal":1765,"carbs":186,"sugar":32,"fiber":18,"protein":79,"sodium":2531,"meals":[]},
+    {"date":"2026-10-11","kcal":1810,"carbs":191,"sugar":45,"fiber":28,"protein":115,"sodium":1532,"meals":[]},
+    {"date":"2026-10-12","kcal":1830,"carbs":168,"sugar":25,"fiber":17,"protein":121,"sodium":1900,"meals":[]},
+    {"date":"2026-10-13","kcal":2030,"carbs":209,"sugar":36,"fiber":26,"protein":136,"sodium":1713,"meals":[]},
+    {"date":"2026-10-14","kcal":2530,"carbs":228,"sugar":56,"fiber":30,"protein":154,"sodium":2750,"meals":[]},
+    {"date":"2026-10-15","kcal":2210,"carbs":179,"sugar":37,"fiber":25,"protein":160,"sodium":2221,"meals":[]},
+    {"date":"2026-10-16","kcal":2080,"carbs":169,"sugar":35,"fiber":19,"protein":115,"sodium":2110,"meals":[]},
+    {"date":"2026-10-17","kcal":1830,"carbs":177,"sugar":36,"fiber":17,"protein":102,"sodium":2221,"meals":[]},
+    {"date":"2026-10-18","kcal":2085,"carbs":226,"sugar":49,"fiber":27,"protein":96,"sodium":2006,"meals":[]},
+    {"date":"2026-10-19","kcal":1081.5,"carbs":122.1,"sugar":28.3,"fiber":16.5,"protein":48.1,"sodium":749,"partial":true,"meals":[{"name":"蕃薯"},{"name":"餃子 × 8","note":"醋同麻油醬"}]}
   ],
   "fitness": [
     {"date":"2026-10-09","move":409,"exercise":36,"stand":5,"steps":10719,"km":7.74},
