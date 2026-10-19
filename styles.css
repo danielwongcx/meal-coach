@@ -331,8 +331,19 @@ h3 {
   font-size: 13px;
 }
 
+.chart-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px 16px;
+}
+
+.trend-block {
+  margin-top: 16px;
+}
+
 .chart {
-  margin: 18px 0 0;
+  margin: 12px 0 0;
+  min-width: 0;
 }
 
 .chart svg {
@@ -601,6 +612,12 @@ code {
 
   .chips {
     grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (min-width: 700px) {
+  .chart-list {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
