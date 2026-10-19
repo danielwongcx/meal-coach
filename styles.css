@@ -1,4 +1,5 @@
-:root {
+:root,
+[data-theme="dark"] {
   --bg: #16130f;
   --card: #241e18;
   --ink: #f6efe6;
@@ -23,7 +24,69 @@
   --row-on: #3a3024;
   --btn-bg: #2a241c;
   --link: #f0c48a;
+  --grid: rgba(246, 239, 230, 0.12);
+  --glow: rgba(194, 120, 60, 0.18);
+  --now-bg: #120f0c;
+  --now-ink: #f6efe6;
+  --now-line: #ffe1b0;
+  --chart-kcal: #e0894a;
+  --chart-carbs: #d4a24a;
+  --chart-sugar: #e16b84;
+  --chart-fiber: #7dae62;
+  --chart-protein: #4caf70;
+  --chart-sodium: #5aa4d4;
+  --chart-fat: #c4a36a;
+  --chart-move: #e15a4a;
+  --chart-exercise: #3c9a45;
+  --chart-stand: #148a9a;
+  --chart-steps: #c4a36a;
+  --chart-km: #7eb0d4;
   color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg: #f3ecdf;
+  --card: #fffaf3;
+  --ink: #241c14;
+  --muted: #5c5146;
+  --line: #eadfce;
+  --good: #146b32;
+  --good-fill: #2f8a4a;
+  --warn: #8a5a08;
+  --warn-fill: #d0891c;
+  --bad: #9d2c24;
+  --bad-fill: #d4533c;
+  --soft: #6d4a12;
+  --soft-fill: #c49245;
+  --progress: #3d5c45;
+  --progress-fill: #8aab8c;
+  --track: #efe4d4;
+  --focus: #9a5b12;
+  --banner-bg: #fff1d2;
+  --banner-ink: #6d4a12;
+  --chip-bg: #f6efe4;
+  --row-hover: #fbf6ee;
+  --row-on: #fff1d6;
+  --btn-bg: #fffaf3;
+  --link: #7a3e12;
+  --grid: rgba(36, 28, 20, 0.12);
+  --glow: rgba(232, 168, 96, 0.55);
+  --now-bg: #2a241c;
+  --now-ink: #fff8ee;
+  --now-line: #ffe1b0;
+  --chart-kcal: #b85a28;
+  --chart-carbs: #8d5a16;
+  --chart-sugar: #b23d55;
+  --chart-fiber: #3f7a32;
+  --chart-protein: #1f7a40;
+  --chart-sodium: #1d6494;
+  --chart-fat: #8a6230;
+  --chart-move: #d04738;
+  --chart-exercise: #2d8a38;
+  --chart-stand: #0e7484;
+  --chart-steps: #8a6230;
+  --chart-km: #2f6488;
+  color-scheme: light;
 }
 
 *,
@@ -39,9 +102,10 @@ html {
 body {
   margin: 0;
   background:
-    radial-gradient(900px 420px at 0% -10%, rgba(194, 120, 60, 0.18), transparent 55%),
+    radial-gradient(900px 420px at 0% -10%, var(--glow), transparent 55%),
     var(--bg);
   color: var(--ink);
+  transition: background-color 0.25s ease, color 0.2s ease;
   font-family: "PingFang HK", "PingFang TC", "Noto Sans TC", "Noto Sans CJK TC", "Microsoft JhengHei", "Heiti TC", "WenQuanYi Micro Hei", sans-serif;
   font-size: 16px;
   line-height: 1.5;
@@ -87,6 +151,51 @@ body {
   gap: 12px;
 }
 
+.title-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.theme-toggle {
+  min-height: 44px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--chip-bg);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.theme-toggle svg {
+  width: 18px;
+  height: 18px;
+  display: none;
+}
+
+[data-theme="dark"] .theme-toggle .icon-sun,
+[data-theme="light"] .theme-toggle .icon-moon {
+  display: block;
+}
+
+.theme-word-dark {
+  display: none;
+}
+
+[data-theme="light"] .theme-word-light {
+  display: none;
+}
+
+[data-theme="light"] .theme-word-dark {
+  display: inline;
+}
+
 h1 {
   margin: 0;
   font-size: 34px;
@@ -127,7 +236,7 @@ h1 {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
   max-width: 100%;
   min-width: 0;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.25s ease, color 0.2s ease;
 }
 
 .scroll {
@@ -391,6 +500,15 @@ h3 {
   height: auto;
 }
 
+.ring-track {
+  fill: none;
+  stroke: var(--track);
+}
+
+.ring-label {
+  fill: var(--ink);
+}
+
 .ring-name {
   display: block;
   font-weight: 700;
@@ -562,8 +680,8 @@ table.fitness {
   margin: 0 0 12px;
   padding: 8px 10px 8px 14px;
   border-radius: 14px;
-  background: #120f0c;
-  color: var(--ink);
+  background: var(--now-bg);
+  color: var(--now-ink);
   box-shadow: 0 8px 20px rgba(36, 28, 20, 0.18);
 }
 
@@ -573,9 +691,9 @@ table.fitness {
 }
 
 .now button {
-  border: 1px solid #ffe1b0;
+  border: 1px solid var(--now-line);
   background: transparent;
-  color: #ffe1b0;
+  color: var(--now-line);
   white-space: nowrap;
 }
 
@@ -656,7 +774,13 @@ code {
   .sheet-backdrop,
   .chevron,
   .row-btn,
-  .jump-sheet a {
+  .jump-sheet a,
+  body,
+  .theme-toggle,
+  .chip,
+  .step-stats div,
+  .banner,
+  .now {
     transition: none !important;
     animation: none !important;
   }

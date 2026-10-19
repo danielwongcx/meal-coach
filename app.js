@@ -577,9 +577,9 @@ function ringSvg(value, goal, color) {
     : '<circle cx="60" cy="60" r="' + radius + '" fill="none" stroke="' + color + '" stroke-width="11" stroke-linecap="round" stroke-dasharray="' + dash + " " + gap + '" transform="rotate(-90 60 60)"></circle>';
   return (
     '<svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">' +
-      '<circle cx="60" cy="60" r="' + radius + '" fill="none" stroke="#3a322a" stroke-width="11"></circle>' +
+      '<circle class="ring-track" cx="60" cy="60" r="' + radius + '" stroke-width="11"></circle>' +
       arc +
-      '<text x="60" y="66" text-anchor="middle" font-size="16" font-weight="700" fill="#f6efe6" font-family="Georgia, serif">' + esc(pctText(value, goal)) + "</text>" +
+      '<text class="ring-label" x="60" y="66" text-anchor="middle" font-size="16" font-weight="700" font-family="Georgia, serif">' + esc(pctText(value, goal)) + "</text>" +
     "</svg>"
   );
 }
@@ -835,6 +835,174 @@ function clearCharts() {
   revealObserver = null;
 }
 
+function chartAnimations(type, count) {
+  const step = 900 / Math.max(Number(count) || 1, 1);
+  if (type === "bar") {
+    return {
+      y: { duration: 0 },
+      base: { duration: 0 },
+      height: { duration: 0 },
+      x: {
+        type: "number",
+        easing: "easeOutQuart",
+        duration: step,
+        from(ctx) {
+          if (!ctx || ctx.type !== "data") return undefined;
+          const el = ctx.chart.getDatasetMeta(ctx.datasetIndex).data[ctx.index];
+          const props = el.getProps(["x", "width"], true);
+          return props.x - props.width / 2;
+        },
+        delay(ctx) {
+          if (!ctx || ctx.type !== "data" || ctx.xStarted) return 0;
+          ctx.xStarted = true;
+          return ctx.index * step;
+        },
+      },
+      width: {
+        type: "number",
+        easing: "easeOutQuart",
+        duration: Math.max(step, 160),
+        from: 0,
+        delay(ctx) {
+          if (!ctx || ctx.type !== "data" || ctx.wStarted) return 0;
+          ctx.wStarted = true;
+          return ctx.index * step;
+        },
+      },
+    };
+  }
+  const previousY = (ctx) => {
+    if (!ctx || ctx.type !== "data" || ctx.index === 0) {
+      return ctx.chart.scales.y.getPixelForValue(ctx.raw);
+    }
+    const prev = ctx.chart.getDatasetMeta(ctx.datasetIndex).data[ctx.index - 1];
+    return prev.getProps(["y"], true).y;
+  };
+  return {
+    x: {
+      type: "number",
+      easing: "linear",
+      duration: step,
+      from: NaN,
+      delay(ctx) {
+        if (!ctx || ctx.type !== "data" || ctx.xStarted) return 0;
+        ctx.xStarted = true;
+        return ctx.index * step;
+      },
+    },
+    y: {
+      type: "number",
+      easing: "linear",
+      duration: step,
+      from: previousY,
+      delay(ctx) {
+        if (!ctx || ctx.type !== "data" || ctx.yStarted) return 0;
+        ctx.yStarted = true;
+        return ctx.index * step;
+      },
+    },
+  };
+}
+
+function themeName() {
+  return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+}
+
+function themeColors() {
+  return {
+    card: cssVar("--card", "#241e18"),
+    muted: cssVar("--muted", "#d2c3b2"),
+    line: cssVar("--line", "#3d342b"),
+    ink: cssVar("--ink", "#f6efe6"),
+    grid: cssVar("--grid", "rgba(246, 239, 230, 0.12)"),
+  };
+}
+
+function chartSeriesColor(key) {
+  return cssVar("--chart-" + key, CHART_COLOR[key] || "#f6efe6");
+}
+
+function paintChart(entry) {
+  const colors = themeColors();
+  const color = chartSeriesColor(entry.spec.key);
+  const card = colors.card;
+  const set = entry.chart.data.datasets[0];
+  set.borderColor = color;
+  set.backgroundColor = hexAlpha(color, 0.18);
+  set.pointBorderColor = color;
+  set.pointRadius = entry.points.map((point) => (point.date === selectedDate ? 7 : point.partial ? 5 : 3.5));
+  set.pointHoverRadius = entry.points.map((point) => (point.date === selectedDate ? 8 : 5));
+  set.pointBackgroundColor = entry.points.map((point) => (point.partial || point.date === selectedDate ? card : color));
+  set.pointBorderWidth = entry.points.map((point) => (point.date === selectedDate ? 3 : 2));
+  if (entry.chart.data.datasets[1]) entry.chart.data.datasets[1].borderColor = colors.muted;
+  const scales = entry.chart.options.scales;
+  scales.x.ticks.color = colors.muted;
+  scales.x.border.color = colors.line;
+  scales.y.ticks.color = colors.muted;
+  scales.y.grid.color = colors.grid;
+  const tip = entry.chart.options.plugins.tooltip;
+  tip.backgroundColor = colors.card;
+  tip.titleColor = colors.ink;
+  tip.bodyColor = colors.ink;
+  tip.borderColor = colors.line;
+}
+
+function applyChartTheme() {
+  charts.forEach((entry) => {
+    paintChart(entry);
+    entry.chart.update("none");
+  });
+}
+
+function syncThemeButton() {
+  const button = document.querySelector("#theme-toggle");
+  if (!button) return;
+  const dark = themeName() === "dark";
+  button.setAttribute("aria-pressed", dark ? "true" : "false");
+  button.setAttribute("aria-label", dark ? "轉做淺色" : "轉做深色");
+}
+
+function applyTheme(theme, persist) {
+  const next = theme === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  document.documentElement.style.colorScheme = next;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", next === "light" ? "#f3ecdf" : "#16130f");
+  if (persist) {
+    try {
+      localStorage.setItem("meal-coach-theme", next);
+    } catch (error) {
+      /* private mode can block storage */
+    }
+  }
+  syncThemeButton();
+  applyChartTheme();
+}
+
+function bindTheme() {
+  const button = document.querySelector("#theme-toggle");
+  if (!button || button.dataset.bound) return;
+  button.dataset.bound = "1";
+  syncThemeButton();
+  button.addEventListener("click", () => {
+    applyTheme(themeName() === "dark" ? "light" : "dark", true);
+  });
+  if (!window.matchMedia) return;
+  const media = window.matchMedia("(prefers-color-scheme: light)");
+  const onScheme = () => {
+    let saved = "";
+    try {
+      saved = localStorage.getItem("meal-coach-theme") || "";
+    } catch (error) {
+      saved = "dark";
+    }
+    if (saved === "light" || saved === "dark") return;
+    applyTheme(media.matches ? "light" : "dark", false);
+  };
+  if (media.addEventListener) media.addEventListener("change", onScheme);
+  else if (media.addListener) media.addListener(onScheme);
+}
+
 function buildChart(figure, item) {
   const canvas = figure.querySelector("canvas");
   if (!canvas || typeof Chart === "undefined") {
@@ -846,21 +1014,19 @@ function buildChart(figure, item) {
   }
   const points = item.points;
   const spec = item.spec;
-  const card = cssVar("--card", "#241e18");
-  const muted = cssVar("--muted", "#d2c3b2");
-  const line = cssVar("--line", "#3d342b");
-  const ink = cssVar("--ink", "#f6efe6");
+  const colors = themeColors();
+  const series = chartSeriesColor(spec.key);
   const datasets = [
     {
       data: points.map((point) => point.value),
-      borderColor: spec.color,
-      backgroundColor: hexAlpha(spec.color, 0.18),
+      borderColor: series,
+      backgroundColor: hexAlpha(series, 0.18),
       fill: true,
       tension: 0.25,
       pointRadius: points.map((point) => (point.date === selectedDate ? 7 : point.partial ? 5 : 3.5)),
       pointHoverRadius: points.map((point) => (point.date === selectedDate ? 8 : 5)),
-      pointBackgroundColor: points.map((point) => (point.partial || point.date === selectedDate ? card : spec.color)),
-      pointBorderColor: spec.color,
+      pointBackgroundColor: points.map((point) => (point.partial || point.date === selectedDate ? colors.card : series)),
+      pointBorderColor: series,
       pointBorderWidth: points.map((point) => (point.date === selectedDate ? 3 : 2)),
       borderWidth: 2.5,
     },
@@ -868,7 +1034,7 @@ function buildChart(figure, item) {
   if (spec.quota != null) {
     datasets.push({
       data: points.map(() => spec.quota),
-      borderColor: muted,
+      borderColor: colors.muted,
       borderDash: [5, 4],
       borderWidth: 1.5,
       pointRadius: 0,
@@ -883,17 +1049,18 @@ function buildChart(figure, item) {
       datasets: datasets,
     },
     options: {
-      animation: motionOK() ? { duration: 700, easing: "easeOutQuart" } : false,
+      animation: motionOK() ? { duration: 900, easing: "linear" } : false,
+      animations: motionOK() ? chartAnimations("line", points.length) : { x: { duration: 0 }, y: { duration: 0 } },
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: card,
-          titleColor: ink,
-          bodyColor: ink,
-          borderColor: line,
+          backgroundColor: colors.card,
+          titleColor: colors.ink,
+          bodyColor: colors.ink,
+          borderColor: colors.line,
           borderWidth: 1,
           filter: (tip) => tip.datasetIndex === 0,
           callbacks: {
@@ -909,15 +1076,15 @@ function buildChart(figure, item) {
       },
       scales: {
         x: {
-          ticks: { color: muted, maxRotation: 0, autoSkip: true, font: { size: 11 } },
+          ticks: { color: colors.muted, maxRotation: 0, autoSkip: true, font: { size: 11 } },
           grid: { display: false },
-          border: { color: line },
+          border: { color: colors.line },
         },
         y: {
           beginAtZero: true,
           suggestedMax: spec.quota ? spec.quota * 1.16 : undefined,
-          ticks: { color: muted, font: { size: 11 }, maxTicksLimit: 5 },
-          grid: { color: "rgba(246, 239, 230, 0.08)" },
+          ticks: { color: colors.muted, font: { size: 11 }, maxTicksLimit: 5 },
+          grid: { color: colors.grid },
           border: { display: false },
         },
       },
@@ -933,13 +1100,8 @@ function buildChart(figure, item) {
 }
 
 function highlightCharts() {
-  const card = cssVar("--card", "#241e18");
   charts.forEach((entry) => {
-    const set = entry.chart.data.datasets[0];
-    set.pointRadius = entry.points.map((point) => (point.date === selectedDate ? 7 : point.partial ? 5 : 3.5));
-    set.pointHoverRadius = entry.points.map((point) => (point.date === selectedDate ? 8 : 5));
-    set.pointBackgroundColor = entry.points.map((point) => (point.partial || point.date === selectedDate ? card : entry.spec.color));
-    set.pointBorderWidth = entry.points.map((point) => (point.date === selectedDate ? 3 : 2));
+    paintChart(entry);
     entry.chart.update("none");
   });
 }
@@ -1247,6 +1409,7 @@ function init() {
   const app = document.querySelector("#app");
   app.addEventListener("click", onAppClick);
   bindChrome();
+  bindTheme();
   window.addEventListener("hashchange", () => {
     if (!snapshot) return;
     const hash = decodeURIComponent(location.hash.replace(/^#/, ""));
@@ -1383,6 +1546,16 @@ function runSelfCheck() {
   expect(data.foodLists.fiber.some((item) => item.includes("菜心")) && data.foodLists.fiber.some((item) => item.includes("Ryvita")), "fiber examples");
   expect(Array.isArray(data.foodLists.tips) && data.foodLists.tips.some((item) => item.includes("甜果")), "fiber sugar tip");
   expect(daysNewest()[0].date === "2026-10-19", "newest first");
+  const lineAnim = chartAnimations("line", 11);
+  expect(Number.isNaN(lineAnim.x.from), "line starts hidden and draws across");
+  expect(typeof lineAnim.y.from === "function", "line y follows the previous point");
+  const early = { type: "data", index: 1 };
+  const later = { type: "data", index: 4 };
+  expect(lineAnim.x.delay(later) > lineAnim.x.delay(early), "later points wait so the stroke moves left to right");
+  const barAnim = chartAnimations("bar", 8);
+  expect(barAnim.height.duration === 0 && barAnim.y.duration === 0 && barAnim.base.duration === 0, "bars do not grow upward");
+  expect(barAnim.width.from === 0, "bars grow in width");
+  expect(barAnim.width.delay({ type: "data", index: 3 }) > barAnim.width.delay({ type: "data", index: 0 }), "bars progress left to right");
 }
 
 if (typeof process !== "undefined" && process.argv && process.argv.includes("--check")) {
