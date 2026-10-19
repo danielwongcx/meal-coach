@@ -6,18 +6,11 @@ The page only reads `data.json`. It does not invent meals, and it does not call 
 
 ## View on GitHub Pages
 
-After this change is on `main` and Pages is enabled:
-
 https://danielwongcx.github.io/meal-coach/
 
-This environment cannot change repository settings. Enable Pages once:
+Pages is already turned on for this repo: deploy from branch **main**, folder **/ (root)**. This pull request has to be merged before that URL shows the dashboard. Until then it still serves whatever is on `main`.
 
-1. Open [Settings → Pages](https://github.com/danielwongcx/meal-coach/settings/pages).
-2. Build and deployment: **Deploy from a branch**.
-3. Branch: **main**, folder: **/ (root)**. Save.
-4. Wait for the deployment, then open the URL above.
-
-A `.nojekyll` file is included so GitHub Pages serves the files as-is.
+A `.nojekyll` file is included so Pages serves the files as-is. If Pages was ever switched off, turn it back on at [Settings → Pages](https://github.com/danielwongcx/meal-coach/settings/pages) with branch `main` and folder `/ (root)`.
 
 ## Open locally
 

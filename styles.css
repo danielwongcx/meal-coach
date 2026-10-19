@@ -41,7 +41,8 @@ body {
 }
 
 .wrap {
-  width: min(760px, calc(100% - 32px));
+  width: min(760px, calc(100vw - 32px));
+  max-width: 100%;
   margin: 0 auto;
 }
 
@@ -125,6 +126,8 @@ h1 {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   margin: 8px -4px 0;
+  width: 0;
+  min-width: 100%;
   max-width: 100%;
 }
 

@@ -706,9 +706,25 @@ function assertData(data) {
   if (!data.fitnessGoals) throw new Error("data.json 缺少 fitnessGoals");
 }
 
+function applyHash() {
+  const hash = decodeURIComponent(location.hash.replace(/^#/, ""));
+  const days = daysSorted();
+  const date = days.some((day) => day.date === hash) ? hash : latestDate();
+  if (!date || date === selectedDate) return false;
+  selectedDate = date;
+  return true;
+}
+
 function init() {
   const app = document.querySelector("#app");
   app.addEventListener("click", onAppClick);
+  window.addEventListener("hashchange", () => {
+    if (!snapshot) return;
+    if (applyHash()) {
+      render();
+      announce(currentDay());
+    }
+  });
   if (location.protocol === "file:") {
     app.innerHTML = errorCard(
       "瀏覽器開唔到本地 data.json",
@@ -724,9 +740,7 @@ function init() {
     .then((data) => {
       assertData(data);
       snapshot = data;
-      const hash = decodeURIComponent(location.hash.replace(/^#/, ""));
-      const days = daysSorted();
-      selectedDate = days.some((day) => day.date === hash) ? hash : days[days.length - 1].date;
+      if (!applyHash()) selectedDate = latestDate();
       const updated = document.querySelector("#updated");
       if (updated && snapshot.updatedAt) updated.textContent = "更新 " + formatUpdated(snapshot.updatedAt);
       render();
