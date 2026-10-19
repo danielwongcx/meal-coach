@@ -14,12 +14,28 @@ const METRICS = [
   { key: "fat", quotaKey: "fat_g", label: "脂肪", unit: "g", kind: "balance" },
 ];
 
-const CHART_KEYS = ["kcal", "protein", "sodium"];
+const NUTRITION_CHART_ORDER = ["kcal", "carbs", "sugar", "fiber", "protein", "sodium", "fat"];
 const CHART_COLOR = {
   kcal: "#c4622d",
+  carbs: "#a56b2a",
+  sugar: "#c4536a",
+  fiber: "#5d8a45",
   protein: "#2f7d4a",
   sodium: "#2b6e97",
+  fat: "#8a6a3b",
+  move: "#e15a4a",
+  exercise: "#3c9a45",
+  stand: "#148a9a",
+  steps: "#6d5438",
+  km: "#3d6f8f",
 };
+const FITNESS_CHARTS = [
+  { key: "move", label: "活動", unit: "kcal", goalKey: "move", format: "int" },
+  { key: "exercise", label: "運動", unit: "分鐘", goalKey: "exercise", format: "int" },
+  { key: "stand", label: "站立", unit: "小時", goalKey: "stand", format: "int" },
+  { key: "steps", label: "步數", unit: "步", goalKey: null, format: "int" },
+  { key: "km", label: "公里", unit: "公里", goalKey: null, format: "km" },
+];
 
 const RING_META = [
   { key: "move", goalKey: "move", label: "活動", unit: "kcal", color: "#e15a4a" },
@@ -250,31 +266,110 @@ function shownFitness() {
   return { row: rows[rows.length - 1], fallback: true };
 }
 
-function trendSummary(days, metric) {
-  const quota = snapshot.quotas[metric.quotaKey];
-  const complete = days.filter((day) => !day.partial && Number.isFinite(Number(day[metric.key])));
-  if (!complete.length) return "未有完整日。";
+function pointSummary(points, spec) {
+  const complete = points.filter((point) => !point.partial && Number.isFinite(point.value));
+  if (!complete.length) return spec.partialAware ? "未有完整日。" : "未有紀錄。";
   let high = complete[0];
   let low = complete[0];
-  complete.forEach((day) => {
-    if (Number(day[metric.key]) > Number(high[metric.key])) high = day;
-    if (Number(day[metric.key]) < Number(low[metric.key])) low = day;
+  complete.forEach((point) => {
+    if (point.value > high.value) high = point;
+    if (point.value < low.value) low = point;
   });
-  let tail;
-  if (metric.kind === "cap") {
-    const count = complete.filter((day) => Number(day[metric.key]) > quota).length;
-    tail = "超上限 " + count + " 日。";
-  } else if (metric.kind === "target") {
-    const count = complete.filter((day) => Number(day[metric.key]) >= quota).length;
-    tail = "達標 " + count + " 日。";
-  } else {
-    const count = complete.filter((day) => {
-      const ratio = Number(day[metric.key]) / quota;
+  const fmt = spec.formatValue;
+  let tail = "";
+  if (spec.quota != null && spec.kind === "cap") {
+    tail = "超上限 " + complete.filter((point) => point.value > spec.quota).length + " 日。";
+  } else if (spec.quota != null && (spec.kind === "target" || spec.kind === "goal")) {
+    tail = "達標 " + complete.filter((point) => point.value >= spec.quota).length + " 日。";
+  } else if (spec.quota != null && spec.kind === "balance") {
+    tail = "貼近目標（±10%）" + complete.filter((point) => {
+      const ratio = point.value / spec.quota;
       return ratio >= 0.9 && ratio <= 1.1;
-    }).length;
-    tail = "貼近目標（±10%）" + count + " 日。";
+    }).length + " 日。";
   }
-  return "完整日最高 " + fmtInt(high[metric.key]) + " " + metric.unit + "（" + dateLabel(high.date) + "），最低 " + fmtInt(low[metric.key]) + " " + metric.unit + "（" + dateLabel(low.date) + "）。" + tail;
+  const lead = spec.partialAware ? "完整日" : "紀錄";
+  return lead + "最高 " + fmt(high.value) + " " + spec.unit + "（" + dateLabel(high.date) + "），最低 " + fmt(low.value) + " " + spec.unit + "（" + dateLabel(low.date) + "）。" + tail;
+}
+
+function trendSummary(days, metric) {
+  const points = days
+    .filter((day) => Number.isFinite(Number(day[metric.key])))
+    .map((day) => ({ date: day.date, value: Number(day[metric.key]), partial: !!day.partial }));
+  return pointSummary(points, {
+    quota: Number(snapshot.quotas[metric.quotaKey]),
+    unit: metric.unit,
+    kind: metric.kind,
+    formatValue: fmtInt,
+    partialAware: true,
+  });
+}
+
+function nutritionChartMetrics() {
+  const present = new Set();
+  daysSorted().forEach((day) => {
+    Object.keys(day).forEach((key) => {
+      if (key === "date" || key === "partial") return;
+      if (Number.isFinite(Number(day[key]))) present.add(key);
+    });
+  });
+  const ordered = NUTRITION_CHART_ORDER.filter((key) => present.has(key));
+  present.forEach((key) => {
+    if (!ordered.includes(key)) ordered.push(key);
+  });
+  return ordered.map((key) => metricByKey(key) || {
+    key: key,
+    quotaKey: null,
+    label: key,
+    unit: "",
+    kind: "range",
+  });
+}
+
+function nutritionSpec(metric) {
+  const words = { cap: "上限", target: "目標", balance: "配額" };
+  const quota = metric.quotaKey != null ? Number(snapshot.quotas[metric.quotaKey]) : null;
+  return {
+    label: metric.label,
+    unit: metric.unit,
+    color: CHART_COLOR[metric.key] || "#241c14",
+    quota: Number.isFinite(quota) && quota > 0 ? quota : null,
+    kind: metric.kind,
+    lineWord: words[metric.kind] || "配額",
+    formatValue: fmtInt,
+    partialAware: true,
+  };
+}
+
+function nutritionPoints(metric) {
+  return trendDays()
+    .filter((day) => Object.prototype.hasOwnProperty.call(day, metric.key) && Number.isFinite(Number(day[metric.key])))
+    .map((day) => ({ date: day.date, value: Number(day[metric.key]), partial: !!day.partial }));
+}
+
+function fitnessChartSpecs() {
+  return FITNESS_CHARTS
+    .filter((item) => fitnessSorted().some((row) => Object.prototype.hasOwnProperty.call(row, item.key) && Number.isFinite(Number(row[item.key]))))
+    .map((item) => {
+      const rawGoal = item.goalKey != null ? Number(snapshot.fitnessGoals[item.goalKey]) : null;
+      const quota = Number.isFinite(rawGoal) && rawGoal > 0 ? rawGoal : null;
+      return {
+        key: item.key,
+        label: item.label,
+        unit: item.unit,
+        color: CHART_COLOR[item.key] || "#241c14",
+        quota: quota,
+        kind: quota == null ? "range" : "goal",
+        lineWord: "目標",
+        formatValue: item.format === "km" ? fmtKm : fmtInt,
+        partialAware: false,
+      };
+    });
+}
+
+function fitnessPoints(key) {
+  return fitnessSorted()
+    .filter((row) => Object.prototype.hasOwnProperty.call(row, key) && Number.isFinite(Number(row[key])))
+    .map((row) => ({ date: row.date, value: Number(row[key]), partial: false }));
 }
 
 function metricRows(day) {
@@ -367,53 +462,58 @@ function chip(value, total, label, tone) {
   );
 }
 
-function chartSvg(days, metric) {
-  const quota = Number(snapshot.quotas[metric.quotaKey]);
-  const color = CHART_COLOR[metric.key] || "#241c14";
+function chartSvg(points, spec) {
+  if (!points.length) return '<p class="fine">未有數字。</p>';
+  const color = spec.color || "#241c14";
+  const quota = spec.quota;
   const width = 360;
   const height = 168;
-  const pad = { l: 48, r: 8, t: 14, b: 26 };
+  const pad = { l: quota == null ? 16 : 52, r: 8, t: 14, b: 26 };
   const innerW = width - pad.l - pad.r;
   const innerH = height - pad.t - pad.b;
-  const values = days.map((day) => Number(day[metric.key]));
-  let maxY = Math.max(quota, ...values, 0) * 1.16;
+  const values = points.map((point) => point.value);
+  let maxY = Math.max(quota || 0, ...values, 0) * 1.16;
   if (!Number.isFinite(maxY) || maxY <= 0) maxY = 1;
-  const slot = innerW / Math.max(days.length, 1);
+  const slot = innerW / Math.max(points.length, 1);
   const xOf = (index) => pad.l + slot * index + slot / 2;
   const yOf = (value) => pad.t + innerH - (value / maxY) * innerH;
   const line = values.map((value, index) => (index === 0 ? "M" : "L") + xOf(index).toFixed(1) + " " + yOf(value).toFixed(1)).join(" ");
-  const area = line + " L" + xOf(days.length - 1).toFixed(1) + " " + yOf(0).toFixed(1) + " L" + xOf(0).toFixed(1) + " " + yOf(0).toFixed(1) + " Z";
-  const qy = yOf(quota);
+  const area = line + " L" + xOf(points.length - 1).toFixed(1) + " " + yOf(0).toFixed(1) + " L" + xOf(0).toFixed(1) + " " + yOf(0).toFixed(1) + " Z";
+  let quotaMark = "";
+  if (quota != null) {
+    const qy = yOf(quota);
+    quotaMark =
+      '<line x1="' + pad.l + '" x2="' + (width - pad.r) + '" y1="' + qy.toFixed(1) + '" y2="' + qy.toFixed(1) + '" stroke="#8d7b66" stroke-width="1.25" stroke-dasharray="4 4"></line>' +
+      '<text x="' + (pad.l - 6) + '" y="' + (qy + 4).toFixed(1) + '" text-anchor="end" font-size="11" fill="#5e5346">' + esc(spec.formatValue(quota)) + "</text>";
+  }
   let slots = "";
   let hits = "";
   let dots = "";
   let labels = "";
-  days.forEach((day, index) => {
+  points.forEach((point, index) => {
     const x = xOf(index);
-    const selected = day.date === selectedDate;
+    const selected = point.date === selectedDate;
     if (selected) {
       slots += '<rect x="' + (pad.l + slot * index).toFixed(1) + '" y="' + pad.t + '" width="' + slot.toFixed(1) + '" height="' + innerH.toFixed(1) + '" fill="#f3e6d2"></rect>';
     }
-    const value = values[index];
     const radius = selected ? 6 : 3.6;
-    if (day.partial || selected) {
-      dots += '<circle cx="' + x.toFixed(1) + '" cy="' + yOf(value).toFixed(1) + '" r="' + radius + '" fill="#fffaf3" stroke="' + color + '" stroke-width="2.4"></circle>';
+    if (point.partial || selected) {
+      dots += '<circle cx="' + x.toFixed(1) + '" cy="' + yOf(point.value).toFixed(1) + '" r="' + radius + '" fill="#fffaf3" stroke="' + color + '" stroke-width="2.4"></circle>';
     } else {
-      dots += '<circle cx="' + x.toFixed(1) + '" cy="' + yOf(value).toFixed(1) + '" r="' + radius + '" fill="' + color + '"></circle>';
+      dots += '<circle cx="' + x.toFixed(1) + '" cy="' + yOf(point.value).toFixed(1) + '" r="' + radius + '" fill="' + color + '"></circle>';
     }
-    const prev = index > 0 ? days[index - 1].date : "";
-    const label = !prev || parts(prev).m !== parts(day.date).m ? shortDate(day.date) : String(parts(day.date).d);
+    const prev = index > 0 ? points[index - 1].date : "";
+    const label = !prev || parts(prev).m !== parts(point.date).m ? shortDate(point.date) : String(parts(point.date).d);
     labels += '<text x="' + x.toFixed(1) + '" y="' + (height - 8) + '" text-anchor="middle" font-size="10" fill="#5e5346">' + esc(label) + "</text>";
-    const title = dateLabel(day.date) + " · " + fmtInt(value) + " " + metric.unit + (day.partial ? " · 進行中" : "");
-    hits += '<rect class="hit" data-chart-date="' + esc(day.date) + '" x="' + (pad.l + slot * index).toFixed(1) + '" y="' + pad.t + '" width="' + slot.toFixed(1) + '" height="' + (innerH + 20).toFixed(1) + '" fill="transparent" tabindex="-1"><title>' + esc(title) + "</title></rect>";
+    const title = dateLabel(point.date) + " · " + spec.formatValue(point.value) + (spec.unit ? " " + spec.unit : "") + (point.partial ? " · 進行中" : "");
+    hits += '<rect class="hit" data-chart-date="' + esc(point.date) + '" x="' + (pad.l + slot * index).toFixed(1) + '" y="' + pad.t + '" width="' + slot.toFixed(1) + '" height="' + (innerH + 20).toFixed(1) + '" fill="transparent" tabindex="-1"><title>' + esc(title) + "</title></rect>";
   });
 
   return (
     '<svg viewBox="0 0 ' + width + " " + height + '" aria-hidden="true" focusable="false">' +
       slots +
       '<line x1="' + pad.l + '" x2="' + (width - pad.r) + '" y1="' + yOf(0).toFixed(1) + '" y2="' + yOf(0).toFixed(1) + '" stroke="#eadfce" stroke-width="1"></line>' +
-      '<line x1="' + pad.l + '" x2="' + (width - pad.r) + '" y1="' + qy.toFixed(1) + '" y2="' + qy.toFixed(1) + '" stroke="#8d7b66" stroke-width="1.25" stroke-dasharray="4 4"></line>' +
-      '<text x="' + (pad.l - 6) + '" y="' + (qy + 4).toFixed(1) + '" text-anchor="end" font-size="11" fill="#5e5346">' + esc(fmtInt(quota)) + "</text>" +
+      quotaMark +
       '<path d="' + area + '" fill="' + color + '" fill-opacity="0.14"></path>' +
       '<path d="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></path>' +
       dots +
@@ -423,31 +523,34 @@ function chartSvg(days, metric) {
   );
 }
 
+function chartFigure(points, spec) {
+  const caption = spec.quota == null
+    ? "未設目標線"
+    : "虛線 = " + spec.lineWord + " " + spec.formatValue(spec.quota) + (spec.unit ? " " + spec.unit : "");
+  return (
+    '<figure class="chart">' +
+      "<figcaption>" +
+        "<h3>" + esc(spec.label) + "</h3>" +
+        '<p class="chart-quota">' + esc(caption) + "</p>" +
+      "</figcaption>" +
+      chartSvg(points, spec) +
+      '<p class="summary">' + esc(pointSummary(points, spec)) + "</p>" +
+    "</figure>"
+  );
+}
+
 function chartsCard() {
   const days = trendDays();
   const stats = chipStats();
   const first = days[0];
   const last = days[days.length - 1];
   const range = first ? dateLabel(first.date) + "至" + dateLabel(last.date) : "";
-  const charts = CHART_KEYS.map((key) => {
-    const metric = metricByKey(key);
-    const quota = snapshot.quotas[metric.quotaKey];
-    return (
-      '<figure class="chart">' +
-        "<figcaption>" +
-          "<h3>" + esc(metric.label) + "</h3>" +
-          '<p class="chart-quota">虛線 = 配額 ' + esc(fmtInt(quota) + " " + metric.unit) + "</p>" +
-        "</figcaption>" +
-        chartSvg(days, metric) +
-        '<p class="summary">' + esc(trendSummary(days, metric)) + "</p>" +
-      "</figure>"
-    );
-  }).join("");
+  const charts = nutritionChartMetrics().map((metric) => chartFigure(nutritionPoints(metric), nutritionSpec(metric))).join("");
 
   return (
     '<section class="card" aria-labelledby="trend-heading">' +
-      '<h2 id="trend-heading">近 ' + days.length + " 日走勢</h2>" +
-      '<p class="section-sub">' + esc(range) + "。熱量、蛋白、鈉對住配額。空心點係進行中。撳圖或者下面個表可以睇返當日。</p>" +
+      '<h2 id="trend-heading">近 ' + days.length + " 日營養走勢</h2>" +
+      '<p class="section-sub">' + esc(range) + "。每項對住上限、目標或者配額。空心點係進行中。撳圖可以睇返當日。</p>" +
       '<div class="chips">' +
         chip(stats.protein, stats.n, "蛋白達標", "good") +
         chip(stats.sugar, stats.n, "糖超上限", "bad") +
@@ -455,8 +558,23 @@ function chartsCard() {
         chip(stats.kcal, stats.n, "熱量貼近", "good") +
       "</div>" +
       '<p class="fine">小結只計 ' + stats.n + " 個完整日，未計進行中。</p>" +
-      charts +
+      '<div class="chart-list">' + charts + "</div>" +
     "</section>"
+  );
+}
+
+function fitnessTrends() {
+  const rows = fitnessSorted();
+  const specs = fitnessChartSpecs();
+  if (!rows.length || !specs.length) return "";
+  const charts = specs.map((spec) => chartFigure(fitnessPoints(spec.key), spec)).join("");
+  const range = dateLabel(rows[0].date) + "至" + dateLabel(rows[rows.length - 1].date);
+  return (
+    '<div class="trend-block">' +
+      "<h3>活動走勢</h3>" +
+      '<p class="section-sub">' + esc(range) + "，只畫有紀錄嘅日子。活動、運動、站立有目標線；步數同公里未設目標。</p>" +
+      '<div class="chart-list">' + charts + "</div>" +
+    "</div>"
   );
 }
 
@@ -607,6 +725,7 @@ function fitnessCard() {
       '<p class="fine">有紀錄 ' + rows.length + " 日，平均 " + fmtInt(avgSteps) + " 步、" + fmtKm(avgKm) + " 公里。目標：活動 " + fmtInt(goals.move) + " kcal、運動 " + fmtInt(goals.exercise) + " 分鐘、站立 " + fmtInt(goals.stand) + " 小時。</p>" +
       missingFit +
       missingMeal +
+      fitnessTrends() +
       '<p class="scroll-hint">左右滑可以睇晒欄。</p>' +
       '<div class="scroll">' +
         '<table class="sheet fitness">' +
@@ -826,6 +945,26 @@ function runSelfCheck() {
   expect(!daysSorted().some((day) => Object.prototype.hasOwnProperty.call(day, "fat")), "no fat");
   const kcalSummary = trendSummary(trendDays(), metricByKey("kcal"));
   expect(kcalSummary.includes("2,530") && kcalSummary.includes("1,765") && kcalSummary.includes("8 日"), kcalSummary);
+  const chartKeys = nutritionChartMetrics().map((metric) => metric.key).join();
+  expect(chartKeys === "kcal,carbs,sugar,fiber,protein,sodium", chartKeys);
+  const sugarSummary = pointSummary(nutritionPoints(metricByKey("sugar")), nutritionSpec(metricByKey("sugar")));
+  expect(sugarSummary.includes("56") && sugarSummary.includes("超上限 9"), sugarSummary);
+  const fiberSummary = pointSummary(nutritionPoints(metricByKey("fiber")), nutritionSpec(metricByKey("fiber")));
+  expect(fiberSummary.includes("達標 2"), fiberSummary);
+  const specs = fitnessChartSpecs();
+  expect(specs.map((spec) => spec.key).join() === "move,exercise,stand,steps,km", specs.map((spec) => spec.key).join());
+  expect(specs.find((spec) => spec.key === "move").quota === 360, "move goal");
+  expect(specs.find((spec) => spec.key === "steps").quota == null, "steps have no goal");
+  expect(specs.find((spec) => spec.key === "km").quota == null, "km has no goal");
+  const sugarSvg = chartSvg(nutritionPoints(metricByKey("sugar")), nutritionSpec(metricByKey("sugar")));
+  expect(sugarSvg.includes(">30</text>") && sugarSvg.includes("stroke-dasharray"), "sugar cap line");
+  expect(sugarSvg.includes("2026-10-19"), "partial day stays on the sugar chart");
+  const stepsSvg = chartSvg(fitnessPoints("steps"), specs.find((spec) => spec.key === "steps"));
+  expect(!stepsSvg.includes("stroke-dasharray"), "steps chart has no goal line");
+  expect((stepsSvg.match(/data-chart-date/g) || []).length === 8, "fitness dates only");
+  expect(!stepsSvg.includes("2026-10-13") && !stepsSvg.includes("2026-10-19"), "no invented fitness days");
+  const moveSvg = chartSvg(fitnessPoints("move"), specs.find((spec) => spec.key === "move"));
+  expect(moveSvg.includes(">360</text>"), "move goal line");
 }
 
 if (typeof process !== "undefined" && process.argv && process.argv.includes("--check")) {

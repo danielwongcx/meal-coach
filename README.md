@@ -8,7 +8,7 @@ The page only reads `data.json`. It does not invent meals, and it does not call 
 
 https://danielwongcx.github.io/meal-coach/
 
-Pages is already turned on for this repo: deploy from branch **main**, folder **/ (root)**. This pull request has to be merged before that URL shows the dashboard. Until then it still serves whatever is on `main`.
+Pages is already turned on for this repo: deploy from branch **main**, folder **/ (root)**. Merging to `main` publishes the latest dashboard to the URL above.
 
 A `.nojekyll` file is included so Pages serves the files as-is. If Pages was ever switched off, turn it back on at [Settings → Pages](https://github.com/danielwongcx/meal-coach/settings/pages) with branch `main` and folder `/ (root)`.
 
@@ -22,7 +22,7 @@ python3 -m http.server 8080
 
 Open http://localhost:8080/
 
-No build step and no CDN. Chart drawing is plain SVG.
+No build step and no CDN. Chart drawing is plain SVG. Nutrition trends cover every number in `daily` (熱量、碳水、糖、纖維、蛋白、鈉, plus fat when a row has it). Fitness trends cover 活動、運動、站立、步數, and 公里. Goal lines are drawn only where `quotas` or `fitnessGoals` has a number. Steps and kilometres have no goal line.
 
 A day can be opened directly with a hash, for example `http://localhost:8080/#2026-10-14`.
 
