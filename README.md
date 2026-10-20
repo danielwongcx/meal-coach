@@ -24,9 +24,9 @@ Open http://localhost:8080/
 
 No build step. Charts use [Chart.js](https://www.chartjs.org/) 4.4.6 (MIT), saved as `chart.umd.min.js`. Each chart draws left to right with an ease-in (`easeInQuad`) whenever it scrolls into view, and again after it leaves and comes back. The area under a line fades from the series color down to clear. The 今日 meters and the 活動 rings grow the same way; a ring past 100% keeps going into a second lap. `prefers-reduced-motion` skips that animation. The page stays within the screen width; wide tables scroll inside their own area.
 
-The header button switches dark and light. The choice is stored in `localStorage` (`meal-coach-theme`). With nothing stored, the page follows the system theme. Nutrition trends cover every number in `daily` (熱量、碳水、糖、纖維、蛋白、鈉, plus fat when a row has it). Fitness trends cover 活動、運動、站立、步數, and 公里. Goal lines are drawn only where `quotas` or `fitnessGoals` has a number. Steps and kilometres have no goal line.
+The header button switches dark and light. The choice is stored in `localStorage` (`meal-coach-theme`). With nothing stored, the page follows the system theme. Nutrition trends cover 熱量、碳水、糖、纖維、蛋白、鈉, plus fat when a row has it. Fitness trends cover 活動、運動、站立、步數, and 公里. Goal lines are drawn only where `quotas` or `fitnessGoals` has a number. Total sugar (`sugar_g`) can be the words 「不設上限 (只限天然果糖)」; the number to watch is `added_sugar_g`. Steps and kilometres have no goal line.
 
-The 今日 card swipes sideways through `daily` (newest first). Under that card, 詳細每日記錄 opens the foods logged for the day on screen, one row per meal. It eases open and closed, and starts open on the latest day and closed on older days. 每日數字 fades and slides in the same way. `prefers-reduced-motion` opens both at once. Each `daily` row can include `meals`: `{ name, meal?, time?, place?, note?, kcal?, carbs?, sugar?, fiber?, protein?, fat?, sodium? }`. `meal` is the sheet label, such as 早餐、午餐、晚餐、or 零食. Leave `meals` as `[]` when the foods were not written down. The round button at the bottom right jumps to 今日、走勢、活動、建議、補數. 每日數字 opens from the button in 近日走勢, in a dialog you can close with the X, the backdrop, or Escape. Short tips live in `advice` (`eating` and `meals`). The 爭邊樣 lines are calculated from the day on screen. Protein and fibre ideas live in `foodLists` (`protein`, `fiber`, optional `tips`) and show under 建議 and 補數.
+The 今日 card swipes sideways through `daily` (newest first). Under that card, 詳細每日記錄 opens the foods logged for the day on screen, one row per meal. It eases open and closed, and starts open on the latest day and closed on older days. 每日數字 fades and slides in the same way. `prefers-reduced-motion` opens both at once. Each `daily` row can include `meals`: `{ name, meal?, time?, place?, note?, kcal?, carbs?, fat?, sugar?, added_sugar?, fiber?, protein?, sodium? }`. Optional day fields are `fat`, `added_sugar`, `water_ml`, `bowel`, and `meds_and_symptoms`. Leave them out when they were not written down. `meal` is the sheet label, such as 早餐、午餐、晚餐、or 零食. Leave `meals` as `[]` when the foods were not written down. The round button at the bottom right jumps to 今日、走勢、活動、建議、補數. 每日數字 opens from the button in 近日走勢, in a dialog you can close with the X, the backdrop, or Escape. Short tips live in `advice` (`eating` and `meds_safety`). The 爭邊樣 lines are calculated from the day on screen. Protein, fibre, and 少食／慎選 live in `foodLists` (`protein`, `fiber`, `caution`) and show under 建議 and 補數.
 
 A day can be opened directly with a hash, for example `http://localhost:8080/#2026-10-14`. Section links (`#advice` and the others) do not change the selected day.
 
@@ -39,7 +39,7 @@ A day can be opened directly with a hash, for example `http://localhost:8080/#20
 
 A day with `"partial": true` still uses these marks. The card itself says 進行中.
 
-Sugar and sodium are caps. Fibre and protein are targets. Calories, carbs, and fat are “stay near the line”. Fat is hidden unless a day includes `fat` (the quota can still sit in `quotas`).
+Sodium and added sugar are caps. Total sugar is shown as grams and is not marked against a number when `sugar_g` is text. Fibre, protein, and water are targets. Calories, carbs, and fat are “stay near the line”. Fat, added sugar, water, bowel, and meds show only on days that include them.
 
 ## Refresh `data.json` from a Google Sheet
 
@@ -58,10 +58,12 @@ Do not commit API keys, OAuth tokens, or a service-account file.
     "kcal": 1950,
     "carbs_g": 190,
     "fat_g": 65,
-    "sugar_g": 30,
+    "sugar_g": "不設上限 (只限天然果糖)",
+    "added_sugar_g": 25,
     "fiber_g": 28,
     "protein_g": 135,
-    "sodium_mg": 2000
+    "sodium_mg": 2000,
+    "water_ml": 2500
   },
   "daily": [
     {"date":"2026-10-19","kcal":457,"carbs":34,"sugar":16,"fiber":7,"protein":23,"sodium":219,"partial":true,"meals":[]}
@@ -72,7 +74,7 @@ Do not commit API keys, OAuth tokens, or a service-account file.
   "fitnessGoals": {"move":360,"exercise":30,"stand":12},
   "advice": {
     "eating": ["少醬，飯食半碗，菜多一點。"],
-    "meals": ["蒸蛋、豆腐、白魚：軟身，蛋白高。"]
+    "meds_safety": ["絕對禁止：西柚、沙田柚、含人工葉酸 (Folic Acid) 嘅補充劑。"]
   }
 }
 ```
