@@ -9,8 +9,10 @@ const METRICS = [
   { key: "protein", quotaKey: "protein_g", label: "蛋白", unit: "g", kind: "target" },
   { key: "carbs", quotaKey: "carbs_g", label: "碳水", unit: "g", kind: "balance" },
   { key: "sugar", quotaKey: "sugar_g", label: "糖", unit: "g", kind: "cap" },
+  { key: "added_sugar", quotaKey: "added_sugar_g", label: "添加糖", unit: "g", kind: "cap" },
   { key: "fiber", quotaKey: "fiber_g", label: "纖維", unit: "g", kind: "target" },
   { key: "sodium", quotaKey: "sodium_mg", label: "鈉", unit: "mg", kind: "cap" },
+  { key: "water_ml", quotaKey: "water_ml", label: "飲水", unit: "ml", kind: "target" },
   { key: "fat", quotaKey: "fat_g", label: "脂肪", unit: "g", kind: "balance" },
 ];
 
@@ -96,6 +98,11 @@ function metricByKey(key) {
   return METRICS.find((metric) => metric.key === key);
 }
 
+function quotaNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
 function classify(key, value, quota) {
   const metric = metricByKey(key);
   const kind = metric ? metric.kind : "balance";
@@ -163,13 +170,17 @@ function trendDays() {
 }
 
 function visibleMetrics(day) {
-  return METRICS.filter((metric) => Object.prototype.hasOwnProperty.call(day, metric.key) && snapshot.quotas[metric.quotaKey] != null);
+  return METRICS.filter((metric) => {
+    if (!day || typeof day[metric.key] !== "number" || !Number.isFinite(day[metric.key])) return false;
+    return snapshot.quotas[metric.quotaKey] != null;
+  });
 }
 
 function calloutItems(day) {
   const items = [];
   visibleMetrics(day).forEach((metric) => {
-    const quota = snapshot.quotas[metric.quotaKey];
+    const quota = quotaNumber(snapshot.quotas[metric.quotaKey]);
+    if (quota == null) return;
     const value = Number(day[metric.key]);
     const status = classify(metric.key, value, quota);
     const show = status.mark === "低" || status.mark === "超" || (status.mark === "近" && metric.kind === "cap");
@@ -209,7 +220,10 @@ function chipStats() {
     n: days.length,
     protein: days.filter((day) => day.protein >= quotas.protein_g).length,
     sodium: days.filter((day) => day.sodium > quotas.sodium_mg).length,
-    sugar: days.filter((day) => day.sugar > quotas.sugar_g).length,
+    added: days.filter((day) => {
+      const cap = quotaNumber(quotas.added_sugar_g);
+      return cap != null && Number.isFinite(day.added_sugar) && day.added_sugar > cap;
+    }).length,
     kcal: days.filter((day) => {
       const ratio = day.kcal / quotas.kcal;
       return ratio >= 0.9 && ratio <= 1.1;
@@ -268,7 +282,7 @@ function trendSummary(days, metric) {
     .filter((day) => Number.isFinite(Number(day[metric.key])))
     .map((day) => ({ date: day.date, value: Number(day[metric.key]), partial: !!day.partial }));
   return pointSummary(points, {
-    quota: Number(snapshot.quotas[metric.quotaKey]),
+    quota: quotaNumber(snapshot.quotas[metric.quotaKey]),
     unit: metric.unit,
     kind: metric.kind,
     formatValue: fmtInt,
@@ -279,17 +293,11 @@ function trendSummary(days, metric) {
 function nutritionChartMetrics() {
   const present = new Set();
   daysSorted().forEach((day) => {
-    Object.keys(day).forEach((key) => {
-      if (key === "date" || key === "partial" || key === "meals") return;
-      if (typeof day[key] !== "number" || !Number.isFinite(day[key])) return;
-      present.add(key);
+    NUTRITION_CHART_ORDER.forEach((key) => {
+      if (typeof day[key] === "number" && Number.isFinite(day[key])) present.add(key);
     });
   });
-  const ordered = NUTRITION_CHART_ORDER.filter((key) => present.has(key));
-  present.forEach((key) => {
-    if (!ordered.includes(key)) ordered.push(key);
-  });
-  return ordered.map((key) => metricByKey(key) || {
+  return NUTRITION_CHART_ORDER.filter((key) => present.has(key)).map((key) => metricByKey(key) || {
     key: key,
     quotaKey: null,
     label: key,
@@ -364,8 +372,22 @@ function badgeHtml(status) {
 
 function metricRows(day) {
   return visibleMetrics(day).map((metric) => {
-    const quota = snapshot.quotas[metric.quotaKey];
+    const quota = quotaNumber(snapshot.quotas[metric.quotaKey]);
     const value = Number(day[metric.key]);
+    if (quota == null) {
+      const note = typeof snapshot.quotas[metric.quotaKey] === "string"
+        ? snapshot.quotas[metric.quotaKey]
+        : "未設數字上限";
+      return (
+        '<div class="metric">' +
+          '<div class="metric-top">' +
+            '<span class="metric-label">' + esc(metric.label) + "</span>" +
+            '<span class="metric-value num">' + esc(fmtInt(value) + " " + metric.unit) + "</span>" +
+          "</div>" +
+          '<p class="metric-note fine">' + esc(note) + "</p>" +
+        "</div>"
+      );
+    }
     const status = classify(metric.key, value, quota);
     const width = fillPct(value, quota).toFixed(1);
     const over = value > quota ? " is-over" : "";
@@ -424,6 +446,7 @@ const MEAL_FIELDS = [
   { key: "kcal", label: "", unit: "kcal" },
   { key: "carbs", label: "碳水", unit: "g" },
   { key: "sugar", label: "糖", unit: "g" },
+  { key: "added_sugar", label: "添加糖", unit: "g" },
   { key: "fiber", label: "纖維", unit: "g" },
   { key: "protein", label: "蛋白", unit: "g" },
   { key: "fat", label: "脂肪", unit: "g" },
@@ -453,6 +476,45 @@ function mealMacroText(entry) {
 
 function mealMetaText(entry) {
   return [entry.time, entry.place].filter(Boolean).join(" · ");
+}
+
+const MED_LABELS = {
+  xeloda_am: "Xeloda 早",
+  xeloda_pm: "Xeloda 晚",
+  lyrica_25mg: "Lyrica 25 mg",
+  vitamin_b6_50mg: "維他命 B6 50 mg",
+  ursofalk_heptral: "Ursofalk／Heptral",
+  neuropathy_level_1_to_10: "麻痺",
+  forehead_rash: "額頭",
+  sleep_quality: "睡眠",
+};
+
+function trackHtml(day) {
+  if (!day) return "";
+  const items = [];
+  const meds = day.meds_and_symptoms;
+  if (meds && typeof meds === "object") {
+    Object.keys(meds).forEach((key) => {
+      const value = meds[key];
+      if (value == null || value === "") return;
+      const label = MED_LABELS[key] || key;
+      const text = key === "neuropathy_level_1_to_10" ? value + " / 10" : String(value);
+      items.push(label + " " + text);
+    });
+  }
+  const bowel = day.bowel;
+  if (bowel && bowel.count != null && Number.isFinite(Number(bowel.count))) {
+    const rawType = bowel.type == null ? "" : String(bowel.type);
+    const type = rawType && rawType.indexOf("/") === -1 ? rawType : "";
+    items.push("大便 " + bowel.count + " 次" + (type ? " · " + type : ""));
+  }
+  if (!items.length) return "";
+  return (
+    '<div class="track-block">' +
+      '<h3 class="food-title">今日追蹤</h3>' +
+      '<ul class="food-tips">' + items.map((item) => "<li>" + esc(item) + "</li>").join("") + "</ul>" +
+    "</div>"
+  );
 }
 
 function mealLogHtml(day) {
@@ -485,7 +547,7 @@ function mealLogHtml(day) {
   return (
     '<details class="meal-log' + ready + '"' + open + ">" +
       '<summary><span>詳細每日記錄</span>' + count + "</summary>" +
-      '<div class="meal-panel"><div class="meal-panel-inner">' + body + "</div></div>" +
+      '<div class="meal-panel"><div class="meal-panel-inner">' + body + trackHtml(day) + "</div></div>" +
     "</details>"
   );
 }
@@ -568,7 +630,7 @@ function chartsCard() {
       "</div>" +
       '<div class="chips">' +
         chip(stats.protein, stats.n, "蛋白達標", "good") +
-        chip(stats.sugar, stats.n, "糖超上限", "bad") +
+        chip(stats.added, stats.n, "添加糖超上限", "bad") +
         chip(stats.sodium, stats.n, "鈉超上限", "bad") +
         chip(stats.kcal, stats.n, "熱量貼近", "good") +
       "</div>" +
@@ -594,9 +656,10 @@ function fitnessTrends() {
 }
 
 function cell(day, metric) {
-  if (!Object.prototype.hasOwnProperty.call(day, metric.key)) return '<td class="num">—</td>';
-  const quota = snapshot.quotas[metric.quotaKey];
+  if (typeof day[metric.key] !== "number" || !Number.isFinite(day[metric.key])) return '<td class="num">—</td>';
+  const quota = quotaNumber(snapshot.quotas[metric.quotaKey]);
   const value = day[metric.key];
+  if (quota == null) return '<td class="num">' + fmtInt(value) + "</td>";
   const status = classify(metric.key, value, quota);
   return (
     '<td class="num tone-' + status.tone + '">' +
@@ -798,7 +861,7 @@ function adviceLists() {
   const block = snapshot.advice || snapshot.comments || {};
   return {
     eating: Array.isArray(block.eating) ? block.eating : [],
-    meals: Array.isArray(block.meals) ? block.meals : [],
+    meds: Array.isArray(block.meds_safety) ? block.meds_safety : [],
   };
 }
 
@@ -835,19 +898,27 @@ function foodGroup(title, items) {
 function foodSection() {
   const protein = foodItems("protein");
   const fiber = foodItems("fiber");
+  const caution = foodItems("caution");
   const tips = foodItems("tips");
-  if (!protein.length && !fiber.length) return "";
+  if (!protein.length && !fiber.length && !caution.length) return "";
   const quotas = snapshot.quotas || {};
   const tipHtml = tips.length
     ? '<ul class="food-tips">' + tips.map((item) => "<li>" + esc(item) + "</li>").join("") + "</ul>"
     : "";
+  const added = quotaNumber(quotas.added_sugar_g);
+  const water = quotaNumber(quotas.water_ml);
+  const sub = "蛋白 " + fmtInt(quotas.protein_g) + " g · 纖維 " + fmtInt(quotas.fiber_g) + " g" +
+    (added == null ? "" : " · 添加糖上限 " + fmtInt(added) + " g") +
+    (water == null ? "" : " · 飲水 " + fmtInt(water) + " ml") +
+    "。總糖係天然果糖，不設上限。";
   return (
     '<section class="card reveal" id="foods" aria-labelledby="foods-heading">' +
       '<h2 id="foods-heading">補數</h2>' +
-      '<p class="section-sub">蛋白 ' + fmtInt(quotas.protein_g) + " g · 纖維 " + fmtInt(quotas.fiber_g) + " g。屋企同黃埔出面都得。</p>" +
+      '<p class="section-sub">' + esc(sub) + "</p>" +
       '<div class="food-grid">' +
         foodGroup("🍗蛋白", protein) +
         foodGroup("🌿纖維", fiber) +
+        foodGroup("少食／慎選", caution) +
       "</div>" +
       tipHtml +
     "</section>"
@@ -857,13 +928,15 @@ function foodSection() {
 function adviceSection() {
   const copy = adviceLists();
   const day = currentDay();
+  const caution = foodItems("caution");
   return (
     '<section class="card reveal" id="advice" aria-labelledby="advice-heading">' +
       '<h2 id="advice-heading">建議</h2>' +
       "<h3>飲食</h3>" +
       listHtml(copy.eating) +
-      "<h3>餐單</h3>" +
-      listHtml(copy.meals) +
+      "<h3>用藥</h3>" +
+      listHtml(copy.meds) +
+      (caution.length ? "<h3>少食／慎選</h3>" + listHtml(caution) : "") +
       '<h3 id="advice-gap-heading">爭邊樣</h3>' +
       '<div id="advice-live">' + adviceLiveHtml(day) + "</div>" +
       fatNote() +
@@ -1980,36 +2053,36 @@ function runSelfCheck() {
   expect(pctText(457, 1950) === "23%", pctText(457, 1950));
   expect(pctText(2530, 1950) === "130%", pctText(2530, 1950));
   expect(weekdayChar("2026-10-19") === "一", "weekday");
+  expect(weekdayChar("2026-10-20") === "二", "tuesday");
   expect(weekdayChar("2026-10-17") === "六", "saturday");
-  expect(latestDate() === "2026-10-19", latestDate());
+  expect(latestDate() === "2026-10-20", latestDate());
   const complete = completeDays();
-  expect(complete.length === 10, "complete");
+  expect(complete.length === 11, "complete " + complete.length);
   const stats = chipStats();
-  expect(stats.protein === 3 && stats.sodium === 6 && stats.sugar === 9 && stats.kcal === 8, JSON.stringify(stats));
-  selectedDate = "2026-10-19";
+  expect(stats.protein === 3 && stats.sodium === 6 && stats.added === 0 && stats.kcal === 9, JSON.stringify(stats));
+  selectedDate = "2026-10-20";
   const todayNote = coachNote(currentDay());
-  expect(todayNote.includes("進行中") && todayNote.includes("蛋白") && todayNote.includes("低"), todayNote);
-  expect(todayNote.includes("糖") && todayNote.includes("近"), todayNote);
+  expect(todayNote.includes("進行中") && todayNote.includes("蛋白") && todayNote.includes("低") && !todayNote.includes("糖"), todayNote);
   selectedDate = "2026-10-14";
   const highNote = coachNote(currentDay());
-  expect(highNote.includes("超") && highNote.includes("2,750") && highNote.includes("56"), highNote);
+  expect(highNote.includes("超") && highNote.includes("2,750") && !highNote.includes("糖"), highNote);
   selectedDate = "2026-10-12";
   const midNote = coachNote(currentDay());
   expect(midNote.includes("纖維") && midNote.includes("低") && midNote.includes("鈉") && midNote.includes("近"), midNote);
   const steps = fitnessSorted().reduce((sum, row) => sum + row.steps, 0);
   const km = fitnessSorted().reduce((sum, row) => sum + row.km, 0);
-  expect(steps === 79380, String(steps));
-  expect(Math.abs(km - 61.48) < 0.001, String(km));
-  expect(fitnessSorted()[fitnessSorted().length - 1].date === "2026-10-17", "latest fitness");
+  expect(steps === 86233, String(steps));
+  expect(Math.abs(km - 66.85) < 0.001, String(km));
+  expect(fitnessSorted()[fitnessSorted().length - 1].date === "2026-10-19", "latest fitness");
   const gaps = dateGaps();
-  expect(gaps.noFit.join() === "2026-10-13,2026-10-18,2026-10-19", gaps.noFit.join());
-  expect(!daysSorted().some((day) => Object.prototype.hasOwnProperty.call(day, "fat")), "no fat");
+  expect(gaps.noFit.join() === "2026-10-13,2026-10-18,2026-10-20", gaps.noFit.join());
+  expect(daysSorted().filter((day) => typeof day.fat === "number").map((day) => day.date).join() === "2026-10-20", "fat only where logged");
   const kcalSummary = trendSummary(trendDays(), metricByKey("kcal"));
   expect(kcalSummary.includes("2,530") && kcalSummary.includes("1,765") && kcalSummary.includes("8 日"), kcalSummary);
   const chartKeys = nutritionChartMetrics().map((metric) => metric.key).join();
-  expect(chartKeys === "kcal,carbs,sugar,fiber,protein,sodium", chartKeys);
+  expect(chartKeys === "kcal,carbs,sugar,fiber,protein,sodium,fat", chartKeys);
   const sugarSummary = pointSummary(nutritionPoints(metricByKey("sugar")), nutritionSpec(metricByKey("sugar")));
-  expect(sugarSummary.includes("56") && sugarSummary.includes("超上限 9"), sugarSummary);
+  expect(sugarSummary.includes("56") && !sugarSummary.includes("超上限"), sugarSummary);
   const fiberSummary = pointSummary(nutritionPoints(metricByKey("fiber")), nutritionSpec(metricByKey("fiber")));
   expect(fiberSummary.includes("達標 2"), fiberSummary);
   const specs = fitnessChartSpecs();
@@ -2018,22 +2091,25 @@ function runSelfCheck() {
   expect(specs.find((spec) => spec.key === "steps").quota == null, "steps have no goal");
   expect(specs.find((spec) => spec.key === "km").quota == null, "km has no goal");
   const sugarModel = chartModel(nutritionPoints(metricByKey("sugar")), nutritionSpec(metricByKey("sugar")));
-  expect(sugarModel.quota === 30 && sugarModel.dates.indexOf("2026-10-19") !== -1, "sugar series keeps the partial day");
+  expect(sugarModel.quota == null && sugarModel.dates.indexOf("2026-10-20") !== -1, "sugar has no numeric cap and keeps the partial day");
   const stepsModel = chartModel(fitnessPoints("steps"), specs.find((spec) => spec.key === "steps"));
-  expect(stepsModel.quota == null && stepsModel.dates.length === 8, "fitness dates only");
-  expect(stepsModel.dates.indexOf("2026-10-13") === -1 && stepsModel.dates.indexOf("2026-10-19") === -1, "no invented fitness days");
+  expect(stepsModel.quota == null && stepsModel.dates.length === 9, "fitness dates only");
+  expect(stepsModel.dates.indexOf("2026-10-13") === -1 && stepsModel.dates.indexOf("2026-10-20") === -1 && stepsModel.dates.indexOf("2026-10-19") !== -1, "no invented fitness days");
   const moveModel = chartModel(fitnessPoints("move"), specs.find((spec) => spec.key === "move"));
   expect(moveModel.quota === 360, "move goal line");
-  expect(Array.isArray(data.advice.eating) && data.advice.eating.length >= 3, "advice eating");
-  expect(Array.isArray(data.advice.meals) && data.advice.meals.length >= 3, "advice meals");
-  expect(Array.isArray(data.foodLists.protein) && data.foodLists.protein.length >= 8, "protein foods");
-  expect(Array.isArray(data.foodLists.fiber) && data.foodLists.fiber.length >= 6, "fiber foods");
-  expect(data.foodLists.protein.some((item) => item.includes("豆漿")) && data.foodLists.protein.some((item) => item.includes("黃埔")), "protein examples");
-  expect(data.foodLists.fiber.some((item) => item.includes("菜心")) && data.foodLists.fiber.some((item) => item.includes("Ryvita")), "fiber examples");
-  expect(Array.isArray(data.foodLists.tips) && data.foodLists.tips.some((item) => item.includes("甜果")), "fiber sugar tip");
-  expect(daysNewest()[0].date === "2026-10-19", "newest first");
+  expect(Array.isArray(data.advice.eating) && data.advice.eating.some((item) => item.includes("溫水")), "advice eating");
+  expect(Array.isArray(data.advice.meds_safety) && data.advice.meds_safety.some((item) => item.includes("西柚")), "meds safety");
+  expect(data.quotas.sugar_g === "不設上限 (只限天然果糖)" && data.quotas.added_sugar_g === 25 && data.quotas.water_ml === 2500, "quota shape");
+  expect(Array.isArray(data.foodLists.protein) && data.foodLists.protein.some((item) => item.includes("全熟")) && data.foodLists.protein.some((item) => item.includes("海參")), "protein examples");
+  expect(Array.isArray(data.foodLists.fiber) && data.foodLists.fiber.some((item) => item.includes("天然果糖")), "fiber examples");
+  expect(Array.isArray(data.foodLists.caution) && data.foodLists.caution.some((item) => item.includes("綠豆沙")), "caution foods");
+  expect(daysNewest()[0].date === "2026-10-20", "newest first");
   const logged = daysSorted().find((day) => day.date === "2026-10-19");
-  expect(logged.kcal === 1081.5 && logged.partial === true, "oct 19 totals stay");
+  expect(logged.kcal === 1911.5 && logged.partial === false && logged.meals.length === 7, "oct 19 totals stay");
+  const morning = daysSorted().find((day) => day.date === "2026-10-20");
+  expect(morning.partial === true && morning.kcal === 610 && morning.fat === 18 && morning.added_sugar === 0 && morning.water_ml == null, "oct 20 breakfast only");
+  expect(morning.meds_and_symptoms.xeloda_am === "08:30" && morning.bowel.count == null, "oct 20 tracking");
+  expect(!daysSorted().some((day) => day.date < "2026-10-20" && (day.meds_and_symptoms || day.bowel || day.water_ml != null)), "no invented history");
   const mealCounts = {
     "2026-10-09": 5,
     "2026-10-10": 4,
@@ -2045,7 +2121,8 @@ function runSelfCheck() {
     "2026-10-16": 4,
     "2026-10-17": 5,
     "2026-10-18": 7,
-    "2026-10-19": 5,
+    "2026-10-19": 7,
+    "2026-10-20": 1,
   };
   daysSorted().forEach((day) => {
     expect(Array.isArray(day.meals) && day.meals.length === mealCounts[day.date], day.date + " meal count " + (day.meals && day.meals.length));
@@ -2059,9 +2136,13 @@ function runSelfCheck() {
   expect(logged.meals.some((item) => item.name.includes("生菜")), "oct 19 lettuce");
   expect(logged.meals.some((item) => item.name.includes("蕃薯") && item.kcal === 180), "oct 19 sweet potato");
   expect(logged.meals.some((item) => item.meal === "午餐" && item.name.includes("餃子") && item.name.includes("醋")), "oct 19 dumplings");
+  expect(logged.meals.some((item) => item.name.includes("海參")), "oct 19 sea cucumber");
+  expect(morning.meals[0].name.includes("黑麥") && morning.meals[0].name.includes("炒蛋") && morning.meals[0].kcal === 610, "oct 20 food");
   expect(mealMacroText({ name: "例", kcal: 1081.5, sodium: 749, carbs: 12 }) === "1081.5 kcal · 碳水 12 g · 鈉 749 mg", mealMacroText({ name: "例", kcal: 1081.5, sodium: 749, carbs: 12 }));
-  const todayLog = mealLogHtml(logged);
-  expect(todayLog.startsWith('<details class="meal-log is-open" open>') && todayLog.includes('class="meal-panel"') && todayLog.includes("420 kcal") && todayLog.includes("~11:00") && todayLog.includes("屋企") && todayLog.includes("蒸餃子 8 隻") && !todayLog.includes("逐項營養未分開記"), "today log");
+  const todayLog = mealLogHtml(morning);
+  expect(todayLog.startsWith('<details class="meal-log is-open" open>') && todayLog.includes("610 kcal") && todayLog.includes("脂肪 18 g") && todayLog.includes("添加糖 0 g") && todayLog.includes("Xeloda 早 08:30") && !todayLog.includes("肚瀉") && !todayLog.includes("大便"), "today log");
+  const loggedView = mealLogHtml(logged);
+  expect(loggedView.startsWith('<details class="meal-log">') && loggedView.includes("海參"), "oct 19 log stays closed");
   const olderDay = daysSorted().find((day) => day.date === "2026-10-18");
   const olderLog = mealLogHtml(olderDay);
   expect(olderLog.startsWith('<details class="meal-log">') && olderLog.includes("綠豆沙") && olderLog.includes("零食") && olderLog.includes("~21:35"), "older log stays closed");

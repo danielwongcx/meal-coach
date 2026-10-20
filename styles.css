@@ -1054,6 +1054,14 @@ code {
   margin: 0 0 8px;
 }
 
+.metric-note {
+  margin: 4px 0 0;
+}
+
+.track-block {
+  margin-top: 10px;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
