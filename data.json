@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-10-25T23:30:00+08:00",
+  "updatedAt": "2026-10-26T01:03:04+08:00",
   "quotas": {
     "kcal": 1950,
     "carbs_g": 190,
@@ -44,7 +44,8 @@
     {"date":"2026-10-21","move":739,"exercise":42,"stand":15,"steps":15001,"km":12.07},
     {"date":"2026-10-22","move":834,"exercise":55,"stand":14,"steps":14948,"km":11.72},
     {"date":"2026-10-23","move":870,"exercise":58,"stand":15,"steps":18549,"km":14.70},
-    {"date":"2026-10-24","move":498,"exercise":24,"stand":9,"steps":11271,"km":8.81}
+    {"date":"2026-10-24","move":498,"exercise":24,"stand":9,"steps":11271,"km":8.81},
+    {"date":"2026-10-25","move":325,"exercise":8,"stand":4,"steps":7804,"km":5.99}
   ],
   "fitnessGoals": {"move":360,"exercise":30,"stand":12},
   "advice": {
