@@ -4,20 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="膳食教練：每日營養對住配額，同活動環、步數。">
-  <meta name="theme-color" content="#16130f">
+  <meta name="theme-color" content="#F7F4EF">
   <script>
     (function () {
       var key = "meal-coach-theme";
-      var theme = "dark";
+      var theme = "light";
       try {
         var saved = localStorage.getItem(key);
         if (saved === "light" || saved === "dark") theme = saved;
-        else if (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches) theme = "light";
       } catch (e) {}
       document.documentElement.setAttribute("data-theme", theme);
       document.documentElement.style.colorScheme = theme;
       var meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.setAttribute("content", theme === "light" ? "#f3ecdf" : "#16130f");
+      if (meta) meta.setAttribute("content", theme === "light" ? "#F7F4EF" : "#16130f");
     })();
   </script>
   <title>今日 · 膳食教練</title>
@@ -63,25 +62,20 @@
       <p id="updated" class="meta"></p>
     </div>
   </header>
+  <nav class="view-tabs" id="view-tabs" aria-label="主要畫面">
+    <div class="wrap view-tabs-inner" role="tablist" aria-orientation="horizontal">
+      <button type="button" class="view-tab" role="tab" id="tab-today" data-view="today" aria-controls="view-today" aria-selected="true">今日飲食</button>
+      <button type="button" class="view-tab" role="tab" id="tab-trends" data-view="trends" aria-controls="view-trends" aria-selected="false" tabindex="-1">趨勢</button>
+      <button type="button" class="view-tab" role="tab" id="tab-fitness" data-view="fitness" aria-controls="view-fitness" aria-selected="false" tabindex="-1">運動</button>
+      <button type="button" class="view-tab" role="tab" id="tab-advice" data-view="advice" aria-controls="view-advice" aria-selected="false" tabindex="-1">建議</button>
+    </div>
+  </nav>
   <main class="wrap" id="app" tabindex="-1">
     <p class="loading">載入緊數據…</p>
   </main>
   <footer class="wrap site-footer">
     <p>數字全部來自 <a href="data.json">data.json</a>，頁面唔會自己加餐。呢個對照只係畀自己睇，唔係醫療或營養診斷。</p>
   </footer>
-  <div class="nav-layer" id="nav-layer" aria-hidden="true">
-    <button type="button" class="sheet-backdrop" aria-label="關閉目錄" tabindex="-1"></button>
-    <nav id="nav-sheet" class="jump-sheet" aria-label="頁面目錄">
-      <a href="#today">今日</a>
-      <a href="#trends">走勢</a>
-      <a href="#fitness">活動</a>
-      <a href="#advice">建議</a>
-      <a href="#foods">補數</a>
-    </nav>
-  </div>
-  <button type="button" class="fab" aria-expanded="false" aria-controls="nav-sheet" aria-label="開啟目錄">
-    <span class="fab-icon" aria-hidden="true"></span>
-  </button>
   <p id="live" class="visually-hidden" aria-live="polite"></p>
   <noscript>
     <p class="wrap">要開 JavaScript 先睇到圖表。數據喺 data.json。</p>
