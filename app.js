@@ -45,8 +45,24 @@ const RING_META = [
   { key: "stand", goalKey: "stand", label: "站立", unit: "小時", color: "#148a9a" },
 ];
 
+const VIEWS = ["today", "trends", "fitness", "advice"];
+const NUTRITION_PILL_ORDER = ["kcal", "protein", "fat", "carbs", "fiber", "sodium", "sugar"];
+const NUTRITION_PILL_LABEL = {
+  kcal: "熱量",
+  protein: "蛋白質",
+  fat: "脂肪",
+  carbs: "碳水",
+  fiber: "膳食纖維",
+  sodium: "鈉",
+  sugar: "糖分",
+};
+
 let snapshot = null;
 let selectedDate = "";
+let activeView = "today";
+let nutritionKey = "kcal";
+let fitnessKey = "move";
+let fitnessExpanded = false;
 let pending = [];
 let charts = [];
 let revealObserver = null;
@@ -423,21 +439,79 @@ function chevronIcon(direction) {
   return '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="' + path + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
 }
 
+function macroHtml(day, key) {
+  const metric = metricByKey(key);
+  if (!metric || !day || typeof day[key] !== "number" || !Number.isFinite(day[key])) return "";
+  const quota = quotaNumber(snapshot.quotas[metric.quotaKey]);
+  if (quota == null) return "";
+  const value = Number(day[key]);
+  const status = classify(key, value, quota);
+  const width = fillPct(value, quota).toFixed(1);
+  const over = value > quota ? " is-over" : "";
+  const percent = pctText(value, quota);
+  const valueText = fmtInt(value) + " / " + fmtInt(quota) + " " + metric.unit;
+  const described = metric.label + " " + valueText + "，" + percent + "，" + status.label;
+  return (
+    '<div class="macro">' +
+      '<span class="macro-label">' + esc(metric.label) + "</span>" +
+      '<span class="macro-value num">' + esc(fmtInt(value)) + '<span class="macro-unit">' + esc(metric.unit) + "</span></span>" +
+      '<div class="track track-compact" role="meter" aria-valuemin="0" aria-valuemax="' + esc(quota) + '" aria-valuenow="' + esc(value) + '" aria-valuetext="' + esc(described) + '">' +
+        '<span class="fill tone-' + status.tone + over + '" style="--fill:' + width + '%"></span>' +
+      "</div>" +
+    "</div>"
+  );
+}
+
+function miniHtml(day, key, label) {
+  const metric = metricByKey(key);
+  if (!metric || !day || typeof day[key] !== "number" || !Number.isFinite(day[key])) return "";
+  const quota = quotaNumber(snapshot.quotas[metric.quotaKey]);
+  const value = Number(day[key]);
+  const shown = label || metric.label;
+  if (quota == null) {
+    const note = typeof snapshot.quotas[metric.quotaKey] === "string" ? snapshot.quotas[metric.quotaKey] : "";
+    const short = note.indexOf("不設上限") !== -1 ? "天然" : (note || "未設上限");
+    return (
+      '<div class="mini-metric">' +
+        '<div class="mini-top"><span>' + esc(shown) + '</span><span class="badge">' + esc(short) + "</span></div>" +
+        '<p class="mini-value num">' + esc(fmtInt(value) + " " + metric.unit) + "</p>" +
+        (note ? '<p class="visually-hidden">' + esc(note) + "</p>" : "") +
+      "</div>"
+    );
+  }
+  const status = classify(key, value, quota);
+  return (
+    '<div class="mini-metric">' +
+      '<div class="mini-top"><span>' + esc(shown) + "</span>" + badgeHtml(status) + "</div>" +
+      '<p class="mini-value num">' + esc(fmtInt(value)) + '<span class="mini-unit"> / ' + esc(fmtInt(quota) + " " + metric.unit) + "</span></p>" +
+    "</div>"
+  );
+}
+
 function daySlide(day) {
   const on = day.date === selectedDate;
   const kcalStatus = classify("kcal", day.kcal, snapshot.quotas.kcal);
   const banner = day.partial ? '<p class="banner">進行中</p>' : "";
+  const macros = ["protein", "carbs", "fat"].map((key) => macroHtml(day, key)).filter(Boolean);
+  const minis = [
+    miniHtml(day, "fiber", "纖維"),
+    miniHtml(day, "sugar", "糖"),
+    miniHtml(day, "sodium", "鈉"),
+    miniHtml(day, "added_sugar", "添加糖"),
+  ].filter(Boolean);
   return (
     '<article class="day-slide' + (on ? " is-current" : "") + '" data-slide="' + esc(day.date) + '" aria-hidden="' + (on ? "false" : "true") + '">' +
       banner +
-      '<p class="slide-date">' + esc(dateLabel(day.date)) + " · 星期" + esc(weekdayChar(day.date)) + "</p>" +
-      '<p class="hero-line">' +
-        '<span class="hero-value num tone-' + kcalStatus.tone + '">' + fmtInt(day.kcal) + "</span>" +
-        '<span class="hero-unit">kcal</span>' +
-        badgeHtml(kcalStatus) +
-      "</p>" +
-      '<p class="hero-sub num">' + esc(heroSub(day)) + "</p>" +
-      metricRows(day) +
+      '<div class="hero-card">' +
+        '<p class="hero-line">' +
+          '<span class="hero-value num tone-' + kcalStatus.tone + '">' + fmtInt(day.kcal) + "</span>" +
+          '<span class="hero-unit">kcal</span>' +
+          badgeHtml(kcalStatus) +
+        "</p>" +
+        '<p class="hero-sub num">' + esc(heroSub(day)) + "</p>" +
+      "</div>" +
+      (macros.length ? '<div class="macro-row cols-' + macros.length + '">' + macros.join("") + "</div>" : "") +
+      (minis.length ? '<div class="mini-grid">' + minis.join("") + "</div>" : "") +
     "</article>"
   );
 }
@@ -517,38 +591,62 @@ function trackHtml(day) {
   );
 }
 
+function aiNoteHtml(note) {
+  const text = String(note || "");
+  if (!text) return "";
+  if (text.length <= 28) return '<p class="meal-note">' + esc(text) + "</p>";
+  return (
+    '<div class="ai-note">' +
+      '<details>' +
+        '<summary>查看 AI 分析</summary>' +
+        '<p class="ai-full">' + esc(text) + "</p>" +
+      "</details>" +
+      '<p class="ai-preview">' + esc(text) + "</p>" +
+    "</div>"
+  );
+}
+
+function mealCardHtml(entry) {
+  const meal = entry.meal ? '<span class="meal-tag">' + esc(entry.meal) + "</span>" : "";
+  const time = entry.time ? '<span class="meal-time num">' + esc(entry.time) + "</span>" : "";
+  const kcalText = Object.prototype.hasOwnProperty.call(entry, "kcal") ? fmtAmount(entry.kcal) : "";
+  const kcal = kcalText ? '<span class="meal-kcal num">' + esc(kcalText + " kcal") + "</span>" : "";
+  const macros = MEAL_FIELDS.filter((field) => field.key !== "kcal").map((field) => {
+    if (!Object.prototype.hasOwnProperty.call(entry, field.key)) return "";
+    const text = fmtAmount(entry[field.key]);
+    if (!text) return "";
+    return (field.label ? field.label + " " : "") + text + " " + field.unit;
+  }).filter(Boolean).join(" · ");
+  const macroHtml = macros ? '<p class="meal-macros num">' + esc(macros) + "</p>" : "";
+  return (
+    '<li class="meal-card">' +
+      '<div class="meal-head">' +
+        meal +
+        time +
+        kcal +
+        '<p class="meal-name">' + esc(entry.name) + "</p>" +
+      "</div>" +
+      macroHtml +
+      aiNoteHtml(entry.note) +
+    "</li>"
+  );
+}
+
 function mealLogHtml(day) {
   const meals = dayMeals(day);
-  const open = day && day.date === latestDate() ? " open" : "";
   const count = meals.length ? '<span class="meal-count num">' + meals.length + " 項</span>" : "";
   let body = '<p class="fine">未有逐項紀錄。</p>';
   if (meals.length) {
     const anyMacro = meals.some((entry) => MEAL_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(entry, field.key) && fmtAmount(entry[field.key])));
     const note = anyMacro ? "" : '<p class="fine">逐項營養未分開記，上面係當日總數。</p>';
-    body = note + '<ul class="meal-list">' + meals.map((entry) => {
-      const meal = entry.meal ? '<span class="meal-tag">' + esc(entry.meal) + "</span>" : "";
-      const meta = mealMetaText(entry);
-      const metaHtml = meta ? '<span class="meal-meta num">' + esc(meta) + "</span>" : "";
-      const top = meal || metaHtml ? '<p class="meal-top">' + meal + metaHtml + "</p>" : "";
-      const macros = mealMacroText(entry);
-      const macroHtml = macros ? '<p class="meal-macros num">' + esc(macros) + "</p>" : "";
-      const extra = entry.note ? '<p class="meal-note">' + esc(entry.note) + "</p>" : "";
-      return (
-        '<li class="meal-row">' +
-          top +
-          '<p class="meal-name">' + esc(entry.name) + "</p>" +
-          macroHtml +
-          extra +
-        "</li>"
-      );
-    }).join("") + "</ul>";
+    body = note + '<ul class="meal-list">' + meals.map(mealCardHtml).join("") + "</ul>";
   }
-  const ready = open ? " is-open" : "";
   return (
-    '<details class="meal-log' + ready + '"' + open + ">" +
-      '<summary><span>詳細每日記錄</span>' + count + "</summary>" +
-      '<div class="meal-panel"><div class="meal-panel-inner">' + body + trackHtml(day) + "</div></div>" +
-    "</details>"
+    '<div class="meal-log">' +
+      '<div class="meal-log-head"><h3>餐次</h3>' + count + "</div>" +
+      body +
+      trackHtml(day) +
+    "</div>"
   );
 }
 
@@ -575,10 +673,12 @@ function todaySection() {
           '<button type="button" class="chevron" data-day-step="1" aria-label="較舊一日"' + olderDisabled + ">" + chevronIcon("right") + "</button>" +
         "</div>" +
       "</div>" +
-      '<div class="day-track" tabindex="0" aria-label="每日營養，左右滑睇其他日子">' +
-        days.map(daySlide).join("") +
+      '<div class="today-body">' +
+        '<div class="day-track" tabindex="0" aria-label="每日營養，左右滑睇其他日子">' +
+          days.map(daySlide).join("") +
+        "</div>" +
+        '<div class="meals-col"><div id="meal-slot">' + mealLogHtml(day) + "</div></div>" +
       "</div>" +
-      '<div id="meal-slot">' + mealLogHtml(day) + "</div>" +
       '<p class="legend-line" aria-hidden="true">🔴超 · 🟡近 · 🟢低 · 🟢好</p>' +
       '<p class="visually-hidden">超係明顯超標。近係大約八成五至一百一。低係未夠。好係上限之下，唔使再加。</p>' +
     "</section>"
@@ -594,8 +694,8 @@ function chip(value, total, label, tone) {
   );
 }
 
-function chartFigure(points, spec) {
-  const id = "chart-" + spec.key;
+function chartFigure(points, spec, stableId) {
+  const id = stableId || ("chart-" + spec.key);
   pending.push({ id: id, points: points, spec: spec });
   const caption = spec.quota == null
     ? "未設目標線"
@@ -612,22 +712,55 @@ function chartFigure(points, spec) {
   );
 }
 
+function nutritionSwitchMetrics() {
+  const present = new Map(nutritionChartMetrics().map((metric) => [metric.key, metric]));
+  return NUTRITION_PILL_ORDER.filter((key) => present.has(key)).map((key) => present.get(key));
+}
+
+function activeNutritionMetric() {
+  const metrics = nutritionSwitchMetrics();
+  const metric = metrics.find((item) => item.key === nutritionKey) || metrics[0];
+  if (metric) nutritionKey = metric.key;
+  return metric || null;
+}
+
+function chartSwitch(group, items, activeKey, points, spec) {
+  const labelFor = group === "nutrition"
+    ? (item) => NUTRITION_PILL_LABEL[item.key] || item.label
+    : (item) => item.label;
+  const pills = items.map((item) => {
+    const on = item.key === activeKey;
+    return (
+      '<button type="button" class="filter-pill' + (on ? " is-on" : "") + '" role="tab" data-chart-group="' + group + '" data-chart-key="' + esc(item.key) + '" aria-selected="' + (on ? "true" : "false") + '" tabindex="' + (on ? "0" : "-1") + '">' +
+        esc(labelFor(item)) +
+      "</button>"
+    );
+  }).join("");
+  return (
+    '<div class="chart-switch" data-chart-group="' + group + '">' +
+      '<div class="filter-pills" role="tablist" aria-label="' + (group === "nutrition" ? "營養指標" : "活動指標") + '">' + pills + "</div>" +
+      chartFigure(points, spec, "chart-" + group) +
+    "</div>"
+  );
+}
+
 function chartsCard() {
   const days = trendDays();
   const stats = chipStats();
   const first = days[0];
   const last = days[days.length - 1];
   const range = first ? dateLabel(first.date) + "至" + dateLabel(last.date) : "";
-  const chartsHtml = nutritionChartMetrics().map((metric) => chartFigure(nutritionPoints(metric), nutritionSpec(metric))).join("");
+  const metric = activeNutritionMetric();
+  const chartsHtml = metric
+    ? chartSwitch("nutrition", nutritionSwitchMetrics(), metric.key, nutritionPoints(metric), nutritionSpec(metric))
+    : '<p class="fine">未有走勢。</p>';
   return (
     '<section class="card" id="trends" aria-labelledby="trend-heading">' +
       '<div class="section-head">' +
-        "<div>" +
-          '<h2 id="trend-heading">近 ' + days.length + " 日營養走勢</h2>" +
-          '<p class="section-sub">' + esc(range) + "。空心點係進行中。撳圖可以睇返當日。</p>" +
-        "</div>" +
+        '<h2 id="trend-heading">近 ' + days.length + " 日營養走勢</h2>" +
         '<button type="button" class="text-btn" data-open-days>每日數字</button>' +
       "</div>" +
+      '<p class="section-sub">' + esc(range) + "。空心點係進行中。撳圖可以睇返當日。</p>" +
       '<div class="chips">' +
         chip(stats.protein, stats.n, "蛋白達標", "good") +
         chip(stats.added, stats.n, "添加糖超上限", "bad") +
@@ -635,22 +768,29 @@ function chartsCard() {
         chip(stats.kcal, stats.n, "熱量貼近", "good") +
       "</div>" +
       '<p class="fine">小結只計 ' + stats.n + " 個完整日，未計進行中。</p>" +
-      '<div class="chart-list">' + chartsHtml + "</div>" +
+      chartsHtml +
     "</section>"
   );
+}
+
+function activeFitnessSpec() {
+  const specs = fitnessChartSpecs();
+  const spec = specs.find((item) => item.key === fitnessKey) || specs[0];
+  if (spec) fitnessKey = spec.key;
+  return spec || null;
 }
 
 function fitnessTrends() {
   const rows = fitnessSorted();
   const specs = fitnessChartSpecs();
-  if (!rows.length || !specs.length) return "";
-  const chartsHtml = specs.map((spec) => chartFigure(fitnessPoints(spec.key), spec)).join("");
+  const spec = activeFitnessSpec();
+  if (!rows.length || !spec) return "";
   const range = dateLabel(rows[0].date) + "至" + dateLabel(rows[rows.length - 1].date);
   return (
     '<div class="trend-block">' +
       "<h3>活動走勢</h3>" +
       '<p class="section-sub">' + esc(range) + "。只畫有紀錄嘅日子。步數同公里未設目標。</p>" +
-      '<div class="chart-list">' + chartsHtml + "</div>" +
+      chartSwitch("fitness", specs, spec.key, fitnessPoints(spec.key), spec) +
     "</div>"
   );
 }
@@ -809,17 +949,12 @@ function fitnessLiveHtml() {
   );
 }
 
-function fitnessCard() {
-  const rows = fitnessSorted();
-  if (!rows.length) {
-    return '<section class="card reveal" id="fitness"><h2>活動</h2><p>未有活動紀錄。</p></section>';
-  }
+function fitnessBody(rows) {
   const goals = snapshot.fitnessGoals;
   const shown = shownFitness();
-  const headGoals = RING_META.map((meta) => (
-    '<th scope="col">' + esc(meta.label) + '<span class="subhead">/ ' + esc(fmtInt(goals[meta.goalKey])) + "</span></th>"
-  )).join("");
-  const body = [...rows].reverse().map((item) => {
+  const ordered = [...rows].reverse();
+  const visible = fitnessExpanded ? ordered : ordered.slice(0, 5);
+  return visible.map((item) => {
     const on = shown.row && item.date === shown.row.date;
     const ringCells = RING_META.map((meta) => {
       const value = item[meta.key];
@@ -840,18 +975,40 @@ function fitnessCard() {
       "</tr>"
     );
   }).join("");
+}
+
+function fitnessMoreButton(total) {
+  if (total <= 5) return "";
+  const label = fitnessExpanded ? "只顯示最近 5" : "顯示全部 (" + total + ")";
+  return '<button type="button" class="text-btn fitness-more" data-fitness-more aria-expanded="' + (fitnessExpanded ? "true" : "false") + '">' + label + "</button>";
+}
+
+function fitnessCard() {
+  const rows = fitnessSorted();
+  if (!rows.length) {
+    return '<section class="card reveal" id="fitness"><h2>運動</h2><p>未有活動紀錄。</p></section>';
+  }
+  const goals = snapshot.fitnessGoals;
+  const headGoals = RING_META.map((meta) => (
+    '<th scope="col">' + esc(meta.label) + '<span class="subhead">/ ' + esc(fmtInt(goals[meta.goalKey])) + "</span></th>"
+  )).join("");
 
   return (
     '<section class="card" id="fitness" aria-labelledby="fit-heading">' +
-      '<h2 id="fit-heading">活動</h2>' +
-      '<div id="fitness-live" class="reveal">' + fitnessLiveHtml() + "</div>" +
-      fitnessTrends() +
-      '<p class="scroll-hint">左右滑可以睇晒欄。</p>' +
-      '<div class="scroll">' +
-        '<table class="sheet fitness">' +
-          "<thead><tr><th scope=\"col\">日期</th>" + headGoals + '<th scope="col">步數</th><th scope="col">公里</th></tr></thead>' +
-          "<tbody>" + body + "</tbody>" +
-        "</table>" +
+      '<h2 id="fit-heading">運動</h2>' +
+      '<div class="exercise-split">' +
+        '<div id="fitness-live" class="reveal exercise-live">' + fitnessLiveHtml() + "</div>" +
+        fitnessTrends() +
+        '<div class="exercise-log">' +
+          '<div class="table-head"><h3>活動紀錄</h3>' + fitnessMoreButton(rows.length) + "</div>" +
+          '<p class="scroll-hint">左右滑可以睇晒欄。</p>' +
+          '<div class="scroll">' +
+            '<table class="sheet fitness">' +
+              "<thead><tr><th scope=\"col\">日期</th>" + headGoals + '<th scope="col">步數</th><th scope="col">公里</th></tr></thead>' +
+              "<tbody>" + fitnessBody(rows) + "</tbody>" +
+            "</table>" +
+          "</div>" +
+        "</div>" +
       "</div>" +
     "</section>"
   );
@@ -870,13 +1027,64 @@ function listHtml(items) {
   return '<ul class="advice-list">' + items.map((item) => "<li>" + esc(item) + "</li>").join("") + "</ul>";
 }
 
+function iconSvg(path) {
+  return '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="' + path + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+}
+
+const CARD_ICONS = {
+  alert: "M12 9v4M12 17h.01M10.3 4.8 2.8 18a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 4.8a2 2 0 0 0-3.4 0Z",
+  fork: "M8 3v7M6 3v8a2 2 0 0 0 2 2v8M10 3v7M17 3v8c0 1.2-.8 2-2 2v8M15 3c0 3 2 4 2 7",
+  shield: "M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3Z",
+  leaf: "M5 19c8 0 14-8 14-14-6 0-14 6-14 14Z",
+  plate: "M4 11h16M7 11a5 5 0 0 1 10 0M12 16v4",
+};
+
+function priorityTag(level) {
+  const label = level === "high" ? "高" : level === "mid" ? "中" : "低";
+  return '<span class="priority priority-' + level + '">' + label + "</span>";
+}
+
+function checkItems(items) {
+  if (!items.length) return '<p class="fine">未有文字。</p>';
+  return (
+    '<ul class="check-list">' +
+      items.map((item) => '<li><span class="check-mark" aria-hidden="true"></span><span>' + item + "</span></li>").join("") +
+    "</ul>"
+  );
+}
+
+function checkCard(options) {
+  const body = options.html != null ? options.html : checkItems(options.items || []);
+  return (
+    '<article class="check-card"' + (options.id ? ' id="' + esc(options.id) + '"' : "") + ">" +
+      '<div class="check-card-top">' +
+        '<span class="check-icon" aria-hidden="true">' + options.icon + "</span>" +
+        "<h3>" + esc(options.title) + "</h3>" +
+        priorityTag(options.priority || "low") +
+      "</div>" +
+      body +
+    "</article>"
+  );
+}
+
 function adviceLiveHtml(day) {
   const items = calloutItems(day);
+  const high = items.some((item) => item.status.mark === "超");
+  const priority = !items.length ? "low" : high ? "high" : "mid";
   const head = '<p class="gap-date">' + esc(dateLabel(day.date)) + (day.partial ? " · 進行中" : "") + "</p>";
-  if (!items.length) return head + "<p>呢日未見明顯超標，亦未見要追嘅目標。</p>";
-  return head + '<ul class="gaps">' + items.map((item) => (
-    "<li>" + badgeHtml(item.status) + "<span>" + esc(item.metric.label) + " " + fmtInt(item.value) + " / " + fmtInt(item.quota) + " " + esc(item.metric.unit) + "</span></li>"
-  )).join("") + "</ul>";
+  const html = !items.length
+    ? head + "<p>呢日未見明顯超標，亦未見要追嘅目標。</p>"
+    : head + '<ul class="check-list">' + items.map((item) => (
+      '<li><span class="check-mark" aria-hidden="true"></span><span>' +
+        badgeHtml(item.status) + " " + esc(item.metric.label) + " " + fmtInt(item.value) + " / " + fmtInt(item.quota) + " " + esc(item.metric.unit) +
+      "</span></li>"
+    )).join("") + "</ul>";
+  return checkCard({
+    title: "今日要注意",
+    icon: iconSvg(CARD_ICONS.alert),
+    priority: priority,
+    html: html,
+  });
 }
 
 function foodItems(key) {
@@ -929,20 +1137,27 @@ function adviceSection() {
   const copy = adviceLists();
   const day = currentDay();
   const caution = foodItems("caution");
+  const protein = foodItems("protein");
+  const fiber = foodItems("fiber");
+  const tips = foodItems("tips");
+  const cards = [
+    '<div id="advice-live">' + adviceLiveHtml(day) + "</div>",
+    checkCard({ title: "飲食", icon: iconSvg(CARD_ICONS.fork), priority: "low", items: copy.eating.map(esc) }),
+    checkCard({ title: "用藥", icon: iconSvg(CARD_ICONS.shield), priority: "high", items: copy.meds.map(esc) }),
+    caution.length ? checkCard({ title: "少食／慎選", icon: iconSvg(CARD_ICONS.alert), priority: "mid", items: caution.map(esc) }) : "",
+    protein.length ? checkCard({ id: "foods", title: "補蛋白", icon: iconSvg(CARD_ICONS.plate), priority: "mid", items: protein.map(esc) }) : "",
+    fiber.length ? checkCard({ title: "補纖維", icon: iconSvg(CARD_ICONS.leaf), priority: "mid", items: fiber.map(esc) }) : "",
+  ].filter(Boolean).join("");
+  const tipHtml = tips.length
+    ? '<ul class="food-tips">' + tips.map((item) => "<li>" + esc(item) + "</li>").join("") + "</ul>"
+    : "";
   return (
     '<section class="card reveal" id="advice" aria-labelledby="advice-heading">' +
       '<h2 id="advice-heading">建議</h2>' +
-      "<h3>飲食</h3>" +
-      listHtml(copy.eating) +
-      "<h3>用藥</h3>" +
-      listHtml(copy.meds) +
-      (caution.length ? "<h3>少食／慎選</h3>" + listHtml(caution) : "") +
-      '<h3 id="advice-gap-heading">爭邊樣</h3>' +
-      '<div id="advice-live">' + adviceLiveHtml(day) + "</div>" +
+      '<p class="section-sub">先睇今日缺口，再睇可以點食。</p>' +
+      '<div class="check-grid">' + cards + "</div>" +
+      tipHtml +
       fatNote() +
-      '<h3>補邊樣</h3>' +
-      '<p class="section-sub">蛋白同纖維最難達標。<a href="#foods">睇晒可以食嘅</a>。</p>' +
-      foodPeek() +
     "</section>"
   );
 }
@@ -978,10 +1193,22 @@ function pageTitle(day) {
   return dateLabel(day.date) + " · 膳食教練";
 }
 
+function viewPanel(name, html) {
+  const hidden = activeView === name ? "" : " hidden";
+  return '<div class="view-panel" id="view-' + name + '" role="tabpanel" aria-labelledby="tab-' + name + '"' + hidden + ">" + html + "</div>";
+}
+
 function view() {
   pending = [];
   const day = currentDay();
-  return '<div id="now-slot">' + nowBar(day) + "</div>" + todaySection() + chartsCard() + fitnessCard() + adviceSection() + foodSection() + daysModal();
+  return (
+    '<div id="now-slot">' + nowBar(day) + "</div>" +
+    viewPanel("today", todaySection()) +
+    viewPanel("trends", chartsCard()) +
+    viewPanel("fitness", fitnessCard()) +
+    viewPanel("advice", adviceSection()) +
+    daysModal()
+  );
 }
 
 function cssVar(name, fallback) {
@@ -1343,7 +1570,7 @@ function applyTheme(theme, persist) {
   document.documentElement.setAttribute("data-theme", next);
   document.documentElement.style.colorScheme = next;
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", next === "light" ? "#f3ecdf" : "#16130f");
+  if (meta) meta.setAttribute("content", next === "light" ? "#F7F4EF" : "#16130f");
   if (persist) {
     try {
       localStorage.setItem("meal-coach-theme", next);
@@ -1451,7 +1678,7 @@ function buildChart(figure, item) {
       },
       scales: {
         x: {
-          ticks: { color: colors.muted, maxRotation: 0, autoSkip: true, font: { size: 11 } },
+          ticks: { color: colors.muted, maxRotation: 0, autoSkip: true, maxTicksLimit: 6, font: { size: 11 } },
           grid: { display: false },
           border: { color: colors.line },
         },
@@ -1621,6 +1848,14 @@ function stepDay(delta) {
   choose(next.date, "chevron");
 }
 
+function syncTabs() {
+  document.querySelectorAll(".view-tab").forEach((tab) => {
+    const on = tab.getAttribute("data-view") === activeView;
+    tab.setAttribute("aria-selected", on ? "true" : "false");
+    tab.tabIndex = on ? 0 : -1;
+  });
+}
+
 function render() {
   const app = document.querySelector("#app");
   const scrollY = window.scrollY;
@@ -1628,11 +1863,13 @@ function render() {
   const html = view();
   app.innerHTML = html;
   document.title = pageTitle(currentDay());
+  syncTabs();
   updateChevrons();
   bindTrack();
   mountObservers();
   window.requestAnimationFrame(() => {
     positionDayTrack("auto");
+    revealActiveView();
     window.scrollTo(0, scrollY);
   });
 }
@@ -1645,7 +1882,13 @@ function announce(day) {
 }
 
 function sectionHash(hash) {
-  return /^(today|trends|fitness|advice|foods)$/.test(hash);
+  return /^(today|trends|fitness|advice|foods|days)$/.test(hash);
+}
+
+function viewFromHash(hash) {
+  if (hash === "foods") return "advice";
+  if (hash === "days") return "trends";
+  return VIEWS.indexOf(hash) === -1 ? "" : hash;
 }
 
 let daysOpener = null;
@@ -1773,12 +2016,118 @@ function trapDaysModal(event) {
 
 function writeHash() {
   const url = new URL(window.location.href);
-  const current = decodeURIComponent(url.hash.replace(/^#/, ""));
   if (selectedDate === latestDate()) url.searchParams.delete("day");
   else url.searchParams.set("day", selectedDate);
-  if (!sectionHash(current)) url.hash = selectedDate === latestDate() ? "" : selectedDate;
+  if (activeView !== "today") url.hash = activeView;
+  else url.hash = selectedDate === latestDate() ? "" : selectedDate;
   const search = url.searchParams.toString();
   history.replaceState(null, "", url.pathname + (search ? "?" + search : "") + url.hash);
+}
+
+function chartItem(group, key) {
+  if (group === "fitness") {
+    const spec = fitnessChartSpecs().find((item) => item.key === key);
+    if (!spec) return null;
+    return { id: "chart-fitness", points: fitnessPoints(key), spec: spec };
+  }
+  const metric = nutritionChartMetrics().find((item) => item.key === key);
+  if (!metric) return null;
+  return { id: "chart-nutrition", points: nutritionPoints(metric), spec: nutritionSpec(metric) };
+}
+
+function activateChartPill(button) {
+  const group = button.getAttribute("data-chart-group");
+  const key = button.getAttribute("data-chart-key");
+  if (group === "nutrition") nutritionKey = key;
+  else if (group === "fitness") fitnessKey = key;
+  else return;
+  const host = button.closest(".chart-switch");
+  const figure = host && host.querySelector(".chart");
+  const item = chartItem(group, key);
+  if (!host || !figure || !item) return;
+  host.querySelectorAll(".filter-pill").forEach((pill) => {
+    const on = pill === button;
+    pill.classList.toggle("is-on", on);
+    pill.setAttribute("aria-selected", on ? "true" : "false");
+    pill.tabIndex = on ? 0 : -1;
+  });
+  const caption = item.spec.quota == null
+    ? "未設目標線"
+    : "虛線 = " + item.spec.lineWord + " " + item.spec.formatValue(item.spec.quota) + (item.spec.unit ? " " + item.spec.unit : "");
+  const heading = figure.querySelector("h3");
+  const quota = figure.querySelector(".chart-quota");
+  const summary = figure.querySelector(".summary");
+  if (heading) heading.textContent = item.spec.label;
+  if (quota) quota.textContent = caption;
+  if (summary) summary.textContent = pointSummary(item.points, item.spec);
+  const existing = charts.find((entry) => entry.node === figure);
+  if (existing) {
+    if (existing.raf) cancelAnimationFrame(existing.raf);
+    if (existing.chart) existing.chart.destroy();
+    charts = charts.filter((entry) => entry !== existing);
+  }
+  const index = pending.findIndex((entry) => entry.id === item.id);
+  if (index >= 0) pending[index] = item;
+  else pending.push(item);
+  figure.dataset.chartId = item.id;
+  figure.dataset.mounted = "";
+  figure.dataset.playing = "1";
+  const entry = mountChart(figure);
+  if (entry && entry.chart) entry.chart.resize();
+  playChart(entry);
+}
+
+function revealActiveView() {
+  const panel = document.querySelector("#view-" + activeView);
+  if (!panel) return;
+  panel.querySelectorAll(".chart[data-chart-id]").forEach((node) => {
+    node.dataset.playing = "1";
+    const entry = mountChart(node);
+    if (entry && entry.chart) entry.chart.resize();
+    playChart(entry);
+  });
+  if (activeView === "today") {
+    const today = document.querySelector("#today");
+    if (today) {
+      today.dataset.bars = "1";
+      today.classList.add("is-in");
+      playTodayBars(today);
+    }
+    positionDayTrack("auto");
+  }
+  if (activeView === "fitness") {
+    const fitness = document.querySelector("#fitness");
+    if (fitness) {
+      fitness.dataset.rings = "1";
+      playRings();
+    }
+  }
+}
+
+function showView(name, options) {
+  const next = viewFromHash(name) || (VIEWS.indexOf(name) === -1 ? "today" : name);
+  activeView = next;
+  if (!snapshot) {
+    syncTabs();
+    return;
+  }
+  document.querySelectorAll(".view-panel").forEach((panel) => {
+    panel.hidden = panel.id !== "view-" + next;
+  });
+  syncTabs();
+  if (!options || options.hash !== false) writeHash();
+  if (!options || options.keepScroll !== true) window.scrollTo(0, 0);
+  window.requestAnimationFrame(() => {
+    revealActiveView();
+    if (name === "foods") {
+      const foods = document.querySelector("#foods");
+      if (foods && foods.scrollIntoView) foods.scrollIntoView({ block: "start" });
+    }
+  });
+  if (options && options.focusTab) {
+    const tab = document.querySelector('#tab-' + next);
+    if (tab) tab.focus();
+  }
 }
 
 function syncSelection(source, scope) {
@@ -1849,7 +2198,38 @@ function choose(date, source, scope) {
   syncSelection(source, scope);
 }
 
+function movePill(pill, event) {
+  if (!pill) return false;
+  if (event.key !== "ArrowRight" && event.key !== "ArrowLeft" && event.key !== "Home" && event.key !== "End") return false;
+  const pills = [...pill.parentElement.querySelectorAll(".filter-pill")];
+  if (!pills.length) return false;
+  let index = pills.indexOf(pill);
+  if (event.key === "ArrowRight") index = (index + 1) % pills.length;
+  else if (event.key === "ArrowLeft") index = (index - 1 + pills.length) % pills.length;
+  else if (event.key === "Home") index = 0;
+  else index = pills.length - 1;
+  event.preventDefault();
+  pills[index].focus();
+  activateChartPill(pills[index]);
+  return true;
+}
+
 function onAppClick(event) {
+  const pill = event.target.closest(".filter-pill");
+  if (pill) {
+    activateChartPill(pill);
+    return;
+  }
+  const more = event.target.closest("[data-fitness-more]");
+  if (more) {
+    fitnessExpanded = !fitnessExpanded;
+    const body = document.querySelector("table.fitness tbody");
+    const rows = fitnessSorted();
+    if (body) body.innerHTML = fitnessBody(rows);
+    more.textContent = fitnessExpanded ? "只顯示最近 5" : "顯示全部 (" + rows.length + ")";
+    more.setAttribute("aria-expanded", fitnessExpanded ? "true" : "false");
+    return;
+  }
   const summary = event.target.closest(".meal-log > summary");
   if (summary) {
     toggleMealLog(summary, event);
@@ -1906,29 +2286,33 @@ function setSheet(open, options) {
 }
 
 function bindChrome() {
-  const fab = document.querySelector(".fab");
-  const layer = document.querySelector("#nav-layer");
-  if (!fab || !layer || fab.dataset.bound) return;
-  fab.dataset.bound = "1";
-  fab.addEventListener("click", () => {
-    setSheet(fab.getAttribute("aria-expanded") !== "true", { focus: true });
+  const tabs = document.querySelector("#view-tabs");
+  if (!tabs || tabs.dataset.bound) return;
+  tabs.dataset.bound = "1";
+  tabs.addEventListener("click", (event) => {
+    const tab = event.target.closest(".view-tab");
+    if (!tab) return;
+    showView(tab.getAttribute("data-view"));
   });
-  const backdrop = layer.querySelector(".sheet-backdrop");
-  if (backdrop) backdrop.addEventListener("click", () => setSheet(false, { focus: true }));
-  const sheet = document.querySelector("#nav-sheet");
-  if (sheet) {
-    sheet.addEventListener("click", (event) => {
-      if (event.target.closest("a")) setSheet(false, { focus: false });
-    });
-  }
+  tabs.addEventListener("keydown", (event) => {
+    const current = event.target.closest(".view-tab");
+    if (!current) return;
+    const list = [...tabs.querySelectorAll(".view-tab")];
+    const index = list.indexOf(current);
+    let next = -1;
+    if (event.key === "ArrowRight") next = (index + 1) % list.length;
+    else if (event.key === "ArrowLeft") next = (index - 1 + list.length) % list.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = list.length - 1;
+    else return;
+    event.preventDefault();
+    list[next].focus();
+    showView(list[next].getAttribute("data-view"), { focusTab: false });
+  });
   document.addEventListener("keydown", (event) => {
     if (trapDaysModal(event)) return;
-    if (event.key === "Escape" && layer.classList.contains("is-open")) {
-      event.preventDefault();
-      setSheet(false, { focus: true });
-    }
+    if (movePill(event.target.closest && event.target.closest(".filter-pill"), event)) return;
   });
-  setSheet(false, { focus: false });
 }
 
 function errorCard(title, bodyHtml) {
@@ -1966,12 +2350,15 @@ function init() {
   window.addEventListener("hashchange", () => {
     if (!snapshot) return;
     const hash = decodeURIComponent(location.hash.replace(/^#/, ""));
-    if (hash === "days") {
-      openDaysModal(document.querySelector("[data-open-days]"));
+    const viewName = viewFromHash(hash);
+    if (viewName) {
+      showView(hash, { hash: false });
+      if (hash === "days") openDaysModal(document.querySelector("[data-open-days]"));
       return;
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(hash)) return;
     if (!daysSorted().some((day) => day.date === hash)) return;
+    if (activeView !== "today") showView("today", { hash: false });
     choose(hash, "hash");
   });
   if (location.protocol === "file:") {
@@ -1990,9 +2377,12 @@ function init() {
       assertData(data);
       snapshot = data;
       selectedDate = dateFromHash() || latestDate();
+      const openHash = decodeURIComponent(location.hash.replace(/^#/, ""));
+      const initialView = viewFromHash(openHash);
+      if (initialView) activeView = initialView;
       const updated = document.querySelector("#updated");
       if (updated && snapshot.updatedAt) updated.textContent = "更新 " + formatUpdated(snapshot.updatedAt);
-      const openDays = decodeURIComponent(location.hash.replace(/^#/, "")) === "days";
+      const openDays = openHash === "days";
       render();
       writeHash();
       if (openDays) openDaysModal(document.querySelector("[data-open-days]"));
@@ -2140,14 +2530,14 @@ function runSelfCheck() {
   expect(morning.meals[0].name.includes("黑麥") && morning.meals[0].name.includes("炒蛋") && morning.meals[0].kcal === 610, "oct 20 food");
   expect(mealMacroText({ name: "例", kcal: 1081.5, sodium: 749, carbs: 12 }) === "1081.5 kcal · 碳水 12 g · 鈉 749 mg", mealMacroText({ name: "例", kcal: 1081.5, sodium: 749, carbs: 12 }));
   const todayLog = mealLogHtml(morning);
-  expect(todayLog.startsWith('<details class="meal-log is-open" open>') && todayLog.includes("610 kcal") && todayLog.includes("脂肪 18 g") && todayLog.includes("添加糖 0 g") && todayLog.includes("Xeloda 早 08:30") && !todayLog.includes("肚瀉") && !todayLog.includes("大便"), "today log");
+  expect(todayLog.includes("meal-card") && todayLog.includes("610 kcal") && todayLog.includes("脂肪 18 g") && todayLog.includes("添加糖 0 g") && todayLog.includes("查看 AI 分析") && todayLog.includes("Xeloda 早 08:30") && !todayLog.includes("肚瀉") && !todayLog.includes("大便"), "today log");
   const loggedView = mealLogHtml(logged);
-  expect(loggedView.startsWith('<details class="meal-log">') && loggedView.includes("海參"), "oct 19 log stays closed");
+  expect(loggedView.includes("meal-card") && loggedView.includes("海參") && !loggedView.includes("is-open"), "oct 19 log stays closed");
   const olderDay = daysSorted().find((day) => day.date === "2026-10-18");
   const olderLog = mealLogHtml(olderDay);
-  expect(olderLog.startsWith('<details class="meal-log">') && olderLog.includes("綠豆沙") && olderLog.includes("零食") && olderLog.includes("~21:35"), "older log stays closed");
+  expect(olderLog.includes("meal-card") && olderLog.includes("綠豆沙") && olderLog.includes("零食") && olderLog.includes("~21:35"), "older log stays closed");
   const taggedLog = mealLogHtml({ date: "1999-01-01", meals: [{ name: "蛋", meal: "早餐", kcal: 80, protein: 6 }] });
-  expect(taggedLog.includes("早餐") && taggedLog.includes("80 kcal") && taggedLog.includes("蛋白 6 g") && taggedLog.startsWith('<details class="meal-log">'), taggedLog);
+  expect(taggedLog.includes("早餐") && taggedLog.includes("80 kcal") && taggedLog.includes("蛋白 6 g") && taggedLog.includes("meal-card"), taggedLog);
   const lineAnim = chartAnimations("line", 11);
   expect(Number.isNaN(lineAnim.x.from), "line starts hidden and draws across");
   expect(typeof lineAnim.y.from === "function", "line y follows the previous point");
