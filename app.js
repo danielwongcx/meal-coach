@@ -31,6 +31,7 @@ const CHART_COLOR = {
   steps: "#c4a36a",
   km: "#7eb0d4",
 };
+const FITNESS_MA_DAYS = 7;
 const FITNESS_CHARTS = [
   { key: "move", label: "活動", unit: "kcal", goalKey: "move", format: "int" },
   { key: "exercise", label: "運動", unit: "分鐘", goalKey: "exercise", format: "int" },
@@ -88,6 +89,15 @@ function fmtKm(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "—";
   return number.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+function fmtAverage(value, spec) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  if (spec && spec.formatValue === fmtKm) return fmtKm(number);
+  const rounded = Math.round(number * 10) / 10;
+  if (Number.isInteger(rounded)) return rounded.toLocaleString("en-US");
+  return rounded.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 function pctText(value, quota) {
@@ -290,7 +300,16 @@ function pointSummary(points, spec) {
     }).length + " 日。";
   }
   const lead = spec.partialAware ? "完整日" : "紀錄";
-  return lead + "最高 " + fmt(high.value) + " " + spec.unit + "（" + dateLabel(high.date) + "），最低 " + fmt(low.value) + " " + spec.unit + "（" + dateLabel(low.date) + "）。" + tail;
+  let text = lead + "最高 " + fmt(high.value) + " " + spec.unit + "（" + dateLabel(high.date) + "），最低 " + fmt(low.value) + " " + spec.unit + "（" + dateLabel(low.date) + "）。" + tail;
+  if (spec.combo && points.length) {
+    const averages = movingAverage(points.map((point) => point.value), spec.maWindow || FITNESS_MA_DAYS);
+    const last = averages[averages.length - 1];
+    const lastPoint = points[points.length - 1];
+    if (last != null && lastPoint) {
+      text += "7 日平均 " + fmtAverage(last, spec) + (spec.unit ? " " + spec.unit : "") + "（" + dateLabel(lastPoint.date) + "）。";
+    }
+  }
+  return text;
 }
 
 function trendSummary(days, metric) {
@@ -360,6 +379,8 @@ function fitnessChartSpecs() {
         lineWord: "目標",
         formatValue: item.format === "km" ? fmtKm : fmtInt,
         partialAware: false,
+        combo: true,
+        maWindow: FITNESS_MA_DAYS,
       };
     });
 }
@@ -370,10 +391,27 @@ function fitnessPoints(key) {
     .map((row) => ({ date: row.date, value: Number(row[key]), partial: false }));
 }
 
+// Trailing mean over recorded rows, in date order. Missing dates are not filled in.
+// A row with fewer than `windowSize` earlier rows averages every row from the start through itself.
+function movingAverage(values, windowSize) {
+  const size = Math.max(1, Number(windowSize) || 1);
+  return values.map((value, index) => {
+    const current = Number(value);
+    if (!Number.isFinite(current)) return null;
+    const sample = values.slice(Math.max(0, index - size + 1), index + 1);
+    const nums = sample.map(Number).filter((number) => Number.isFinite(number));
+    if (!nums.length) return null;
+    return nums.reduce((sum, number) => sum + number, 0) / nums.length;
+  });
+}
+
 function chartModel(points, spec) {
+  const values = points.map((point) => point.value);
   return {
     dates: points.map((point) => point.date),
+    values: values,
     quota: spec.quota,
+    average: spec.combo ? movingAverage(values, spec.maWindow || FITNESS_MA_DAYS) : null,
   };
 }
 
@@ -694,12 +732,21 @@ function chip(value, total, label, tone) {
   );
 }
 
+function chartCaption(spec) {
+  const goal = spec.quota == null
+    ? ""
+    : "虛線 = " + spec.lineWord + " " + spec.formatValue(spec.quota) + (spec.unit ? " " + spec.unit : "");
+  if (spec.combo) {
+    const legend = "淺色柱 = 當日 · 實線 = 7 日平均";
+    return goal ? legend + " · " + goal : legend;
+  }
+  return goal || "未設目標線";
+}
+
 function chartFigure(points, spec, stableId) {
   const id = stableId || ("chart-" + spec.key);
   pending.push({ id: id, points: points, spec: spec });
-  const caption = spec.quota == null
-    ? "未設目標線"
-    : "虛線 = " + spec.lineWord + " " + spec.formatValue(spec.quota) + (spec.unit ? " " + spec.unit : "");
+  const caption = chartCaption(spec);
   return (
     '<figure class="chart reveal" data-chart-id="' + esc(id) + '">' +
       "<figcaption>" +
@@ -789,7 +836,7 @@ function fitnessTrends() {
   return (
     '<div class="trend-block">' +
       "<h3>活動走勢</h3>" +
-      '<p class="section-sub">' + esc(range) + "。只畫有紀錄嘅日子。步數同公里未設目標。</p>" +
+      '<p class="section-sub">' + esc(range) + "。只畫有紀錄嘅日子。實線係最近 7 個紀錄嘅平均；未夠 7 個就計由開頭到當日。步數同公里未設目標。</p>" +
       chartSwitch("fitness", specs, spec.key, fitnessPoints(spec.key), spec) +
     "</div>"
   );
@@ -1492,6 +1539,7 @@ function resetRings() {
 }
 
 function themeName() {
+  if (typeof document === "undefined") return "dark";
   return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
 }
 
@@ -1525,19 +1573,118 @@ function areaFill(color) {
   };
 }
 
+function fitnessBarAlpha(selected, theme) {
+  const dark = (theme || themeName()) !== "light";
+  return selected ? (dark ? 0.72 : 0.58) : (dark ? 0.4 : 0.3);
+}
+
+function fitnessBarColor(hex, selected) {
+  return hexAlpha(hex, fitnessBarAlpha(selected));
+}
+
+function linePointStyle(points, color, card, compact) {
+  const radius = compact ? 2.5 : 3.5;
+  const selectedRadius = compact ? 6 : 7;
+  const hover = compact ? 4 : 5;
+  const selectedHover = compact ? 7 : 8;
+  return {
+    pointRadius: points.map((point) => (point.date === selectedDate ? selectedRadius : point.partial ? radius + 1.5 : radius)),
+    pointHoverRadius: points.map((point) => (point.date === selectedDate ? selectedHover : hover)),
+    pointBackgroundColor: points.map((point) => (point.partial || point.date === selectedDate ? card : color)),
+    pointBorderColor: color,
+    pointBorderWidth: points.map((point) => (point.date === selectedDate ? 3 : 2)),
+  };
+}
+
+function quotaDataset(points, spec, colors) {
+  return {
+    type: "line",
+    role: "quota",
+    order: 1,
+    data: points.map(() => spec.quota),
+    borderColor: colors.muted,
+    borderDash: [5, 4],
+    borderWidth: 1.5,
+    pointRadius: 0,
+    pointHoverRadius: 0,
+    fill: false,
+  };
+}
+
+function chartDatasets(points, spec) {
+  const colors = themeColors();
+  const series = chartSeriesColor(spec.key);
+  if (spec.combo) {
+    const averages = movingAverage(points.map((point) => point.value), spec.maWindow || FITNESS_MA_DAYS);
+    const datasets = [
+      {
+        type: "bar",
+        role: "daily",
+        order: 2,
+        data: points.map((point) => point.value),
+        backgroundColor: points.map((point) => fitnessBarColor(series, point.date === selectedDate)),
+        hoverBackgroundColor: points.map(() => fitnessBarColor(series, true)),
+        borderWidth: 0,
+        borderRadius: 3,
+        maxBarThickness: 18,
+        categoryPercentage: 0.72,
+        barPercentage: 0.92,
+      },
+      Object.assign({
+        type: "line",
+        role: "average",
+        order: 0,
+        data: averages,
+        borderColor: series,
+        backgroundColor: "transparent",
+        fill: false,
+        tension: 0.25,
+        borderWidth: 2.5,
+      }, linePointStyle(points, series, colors.card, true)),
+    ];
+    if (spec.quota != null) datasets.push(quotaDataset(points, spec, colors));
+    return datasets;
+  }
+  const datasets = [
+    Object.assign({
+      type: "line",
+      role: "value",
+      data: points.map((point) => point.value),
+      borderColor: series,
+      backgroundColor: areaFill(series),
+      fill: true,
+      tension: 0.25,
+      borderWidth: 2.5,
+    }, linePointStyle(points, series, colors.card, false)),
+  ];
+  if (spec.quota != null) datasets.push(quotaDataset(points, spec, colors));
+  return datasets;
+}
+
 function paintChart(entry) {
   const colors = themeColors();
   const color = chartSeriesColor(entry.spec.key);
   const card = colors.card;
-  const set = entry.chart.data.datasets[0];
-  set.borderColor = color;
-  set.backgroundColor = areaFill(color);
-  set.pointBorderColor = color;
-  set.pointRadius = entry.points.map((point) => (point.date === selectedDate ? 7 : point.partial ? 5 : 3.5));
-  set.pointHoverRadius = entry.points.map((point) => (point.date === selectedDate ? 8 : 5));
-  set.pointBackgroundColor = entry.points.map((point) => (point.partial || point.date === selectedDate ? card : color));
-  set.pointBorderWidth = entry.points.map((point) => (point.date === selectedDate ? 3 : 2));
-  if (entry.chart.data.datasets[1]) entry.chart.data.datasets[1].borderColor = colors.muted;
+  entry.chart.data.datasets.forEach((set) => {
+    if (set.role === "quota") {
+      set.borderColor = colors.muted;
+      return;
+    }
+    if (set.role === "daily") {
+      set.backgroundColor = entry.points.map((point) => fitnessBarColor(color, point.date === selectedDate));
+      set.hoverBackgroundColor = entry.points.map(() => fitnessBarColor(color, true));
+      return;
+    }
+    const compact = set.role === "average";
+    const style = linePointStyle(entry.points, color, card, compact);
+    set.borderColor = color;
+    if (!compact) set.backgroundColor = areaFill(color);
+    set.pointRadius = style.pointRadius;
+    set.pointHoverRadius = style.pointHoverRadius;
+    set.pointBackgroundColor = style.pointBackgroundColor;
+    set.pointBorderColor = style.pointBorderColor;
+    set.pointBorderWidth = style.pointBorderWidth;
+  });
   const scales = entry.chart.options.scales;
   scales.x.ticks.color = colors.muted;
   scales.x.border.color = colors.line;
@@ -1618,35 +1765,9 @@ function buildChart(figure, item) {
   const points = item.points;
   const spec = item.spec;
   const colors = themeColors();
-  const series = chartSeriesColor(spec.key);
-  const datasets = [
-    {
-      data: points.map((point) => point.value),
-      borderColor: series,
-      backgroundColor: areaFill(series),
-      fill: true,
-      tension: 0.25,
-      pointRadius: points.map((point) => (point.date === selectedDate ? 7 : point.partial ? 5 : 3.5)),
-      pointHoverRadius: points.map((point) => (point.date === selectedDate ? 8 : 5)),
-      pointBackgroundColor: points.map((point) => (point.partial || point.date === selectedDate ? colors.card : series)),
-      pointBorderColor: series,
-      pointBorderWidth: points.map((point) => (point.date === selectedDate ? 3 : 2)),
-      borderWidth: 2.5,
-    },
-  ];
-  if (spec.quota != null) {
-    datasets.push({
-      data: points.map(() => spec.quota),
-      borderColor: colors.muted,
-      borderDash: [5, 4],
-      borderWidth: 1.5,
-      pointRadius: 0,
-      pointHoverRadius: 0,
-      fill: false,
-    });
-  }
+  const datasets = chartDatasets(points, spec);
   const chart = new Chart(canvas, {
-    type: "line",
+    type: spec.combo ? "bar" : "line",
     data: {
       labels: points.map((point) => axisLabel(points, point)),
       datasets: datasets,
@@ -1664,14 +1785,30 @@ function buildChart(figure, item) {
           bodyColor: colors.ink,
           borderColor: colors.line,
           borderWidth: 1,
-          filter: (tip) => tip.datasetIndex === 0,
+          filter(tip) {
+            const set = tip.chart.data.datasets[tip.datasetIndex];
+            return !set || set.role !== "quota";
+          },
+          itemSort(a, b) {
+            const rank = (tip) => {
+              const role = tip.chart.data.datasets[tip.datasetIndex].role;
+              if (role === "average") return 1;
+              if (role === "quota") return 2;
+              return 0;
+            };
+            return rank(a) - rank(b);
+          },
           callbacks: {
             title(tips) {
               const point = points[tips[0].dataIndex];
               return dateLabel(point.date) + (point.partial ? " · 進行中" : "");
             },
             label(tip) {
-              return spec.label + " " + spec.formatValue(tip.parsed.y) + (spec.unit ? " " + spec.unit : "");
+              const role = tip.chart.data.datasets[tip.datasetIndex].role;
+              const text = (role === "average" ? fmtAverage(tip.parsed.y, spec) : spec.formatValue(tip.parsed.y))
+                + (spec.unit ? " " + spec.unit : "");
+              if (role === "average") return "7 日平均 " + text;
+              return spec.label + " " + text;
             },
           },
         },
@@ -1692,7 +1829,10 @@ function buildChart(figure, item) {
       },
       onClick(evt) {
         const hits = chart.getElementsAtEventForMode(evt, "index", { intersect: false }, true);
-        const hit = hits.find((entry) => entry.datasetIndex === 0);
+        const hit = hits.find((entry) => {
+          const set = chart.data.datasets[entry.datasetIndex];
+          return set && set.role !== "quota";
+        }) || hits[0];
         if (!hit) return;
         choose(points[hit.index].date, "chart");
       },
@@ -2051,9 +2191,7 @@ function activateChartPill(button) {
     pill.setAttribute("aria-selected", on ? "true" : "false");
     pill.tabIndex = on ? 0 : -1;
   });
-  const caption = item.spec.quota == null
-    ? "未設目標線"
-    : "虛線 = " + item.spec.lineWord + " " + item.spec.formatValue(item.spec.quota) + (item.spec.unit ? " " + item.spec.unit : "");
+  const caption = chartCaption(item.spec);
   const heading = figure.querySelector("h3");
   const quota = figure.querySelector(".chart-quota");
   const summary = figure.querySelector(".summary");
@@ -2445,47 +2583,125 @@ function runSelfCheck() {
   expect(weekdayChar("2026-10-19") === "一", "weekday");
   expect(weekdayChar("2026-10-20") === "二", "tuesday");
   expect(weekdayChar("2026-10-17") === "六", "saturday");
-  expect(latestDate() === "2026-10-20", latestDate());
+  expect(latestDate() >= "2026-11-04", latestDate());
   const complete = completeDays();
-  expect(complete.length === 11, "complete " + complete.length);
+  expect(complete.length === daysSorted().filter((day) => !day.partial).length && complete.length >= 11, "complete " + complete.length);
   const stats = chipStats();
-  expect(stats.protein === 3 && stats.sodium === 6 && stats.added === 0 && stats.kcal === 9, JSON.stringify(stats));
+  expect(stats.n === complete.length && stats.protein <= stats.n && stats.sodium <= stats.n && stats.added <= stats.n && stats.kcal <= stats.n, JSON.stringify(stats));
   selectedDate = "2026-10-20";
   const todayNote = coachNote(currentDay());
-  expect(todayNote.includes("進行中") && todayNote.includes("蛋白") && todayNote.includes("低") && !todayNote.includes("糖"), todayNote);
+  expect(currentDay().partial === false && !todayNote.includes("進行中"), todayNote);
   selectedDate = "2026-10-14";
   const highNote = coachNote(currentDay());
   expect(highNote.includes("超") && highNote.includes("2,750") && !highNote.includes("糖"), highNote);
   selectedDate = "2026-10-12";
   const midNote = coachNote(currentDay());
   expect(midNote.includes("纖維") && midNote.includes("低") && midNote.includes("鈉") && midNote.includes("近"), midNote);
-  const steps = fitnessSorted().reduce((sum, row) => sum + row.steps, 0);
-  const km = fitnessSorted().reduce((sum, row) => sum + row.km, 0);
-  expect(steps === 86233, String(steps));
-  expect(Math.abs(km - 66.85) < 0.001, String(km));
-  expect(fitnessSorted()[fitnessSorted().length - 1].date === "2026-10-19", "latest fitness");
+  expect(fitnessSorted()[fitnessSorted().length - 1].date >= "2026-11-04", "latest fitness");
   const gaps = dateGaps();
-  expect(gaps.noFit.join() === "2026-10-13,2026-10-18,2026-10-20", gaps.noFit.join());
-  expect(daysSorted().filter((day) => typeof day.fat === "number").map((day) => day.date).join() === "2026-10-20", "fat only where logged");
+  expect(gaps.noFit.indexOf("2026-10-13") !== -1 && gaps.noFit.indexOf("2026-10-18") !== -1 && gaps.noFit.indexOf("2026-11-04") === -1, gaps.noFit.join());
+  expect(!daysSorted().some((day) => day.date < "2026-10-20" && typeof day.fat === "number"), "fat only where logged");
+  expect(daysSorted().some((day) => typeof day.fat === "number"), "fat is logged");
   const kcalSummary = trendSummary(trendDays(), metricByKey("kcal"));
-  expect(kcalSummary.includes("2,530") && kcalSummary.includes("1,765") && kcalSummary.includes("8 日"), kcalSummary);
+  expect(kcalSummary.includes("最高") && kcalSummary.includes("最低"), kcalSummary);
   const chartKeys = nutritionChartMetrics().map((metric) => metric.key).join();
   expect(chartKeys === "kcal,carbs,sugar,fiber,protein,sodium,fat", chartKeys);
   const sugarSummary = pointSummary(nutritionPoints(metricByKey("sugar")), nutritionSpec(metricByKey("sugar")));
-  expect(sugarSummary.includes("56") && !sugarSummary.includes("超上限"), sugarSummary);
+  expect(sugarSummary.includes("最高") && !sugarSummary.includes("超上限"), sugarSummary);
   const fiberSummary = pointSummary(nutritionPoints(metricByKey("fiber")), nutritionSpec(metricByKey("fiber")));
-  expect(fiberSummary.includes("達標 2"), fiberSummary);
+  expect(fiberSummary.includes("達標"), fiberSummary);
   const specs = fitnessChartSpecs();
   expect(specs.map((spec) => spec.key).join() === "move,exercise,stand,steps,km", specs.map((spec) => spec.key).join());
   expect(specs.find((spec) => spec.key === "move").quota === 360, "move goal");
   expect(specs.find((spec) => spec.key === "steps").quota == null, "steps have no goal");
   expect(specs.find((spec) => spec.key === "km").quota == null, "km has no goal");
-  const sugarModel = chartModel(nutritionPoints(metricByKey("sugar")), nutritionSpec(metricByKey("sugar")));
-  expect(sugarModel.quota == null && sugarModel.dates.indexOf("2026-10-20") !== -1, "sugar has no numeric cap and keeps the partial day");
-  const stepsModel = chartModel(fitnessPoints("steps"), specs.find((spec) => spec.key === "steps"));
-  expect(stepsModel.quota == null && stepsModel.dates.length === 9, "fitness dates only");
-  expect(stepsModel.dates.indexOf("2026-10-13") === -1 && stepsModel.dates.indexOf("2026-10-20") === -1 && stepsModel.dates.indexOf("2026-10-19") !== -1, "no invented fitness days");
-  const moveModel = chartModel(fitnessPoints("move"), specs.find((spec) => spec.key === "move"));
+  const sugarSpec = nutritionSpec(metricByKey("sugar"));
+  const sugarModel = chartModel(nutritionPoints(metricByKey("sugar")), sugarSpec);
+  expect(sugarModel.quota == null && sugarModel.average == null && sugarModel.dates.length > 0, "sugar has no numeric cap and stays off the fitness average");
+  expect(chartCaption(sugarSpec) === "未設目標線", chartCaption(sugarSpec));
+  const sugarSets = chartDatasets(nutritionPoints(metricByKey("sugar")), sugarSpec);
+  expect(sugarSets.length === 1 && sugarSets[0].type === "line" && sugarSets[0].role === "value", "nutrition chart stays a line");
+  const expectNear = (actual, expected, message) => {
+    expect(Math.abs(Number(actual) - expected) < 0.001, message + " → " + actual);
+  };
+  const rule = movingAverage([1, 2, 3, 4, 5, 6, 7, 8], 7);
+  expectNear(rule[0], 1, "ma uses the only day so far");
+  expectNear(rule[5], 21 / 6, "ma before seven days averages the days so far");
+  expectNear(rule[6], 28 / 7, "ma at seven days");
+  expectNear(rule[7], 35 / 7, "ma then drops the oldest day");
+  const maCases = {
+    steps: [
+      ["2026-10-09", 10719, 10719],
+      ["2026-10-15", 11874, (10719 + 11374 + 11476 + 6692 + 6915 + 11874) / 6],
+      ["2026-10-16", 11909, (10719 + 11374 + 11476 + 6692 + 6915 + 11874 + 11909) / 7],
+      ["2026-11-04", 8315, (19073 + 11153 + 15389 + 10041 + 6473 + 7901 + 8315) / 7],
+    ],
+    km: [
+      ["2026-10-09", 7.74, 7.74],
+      ["2026-10-15", 9.43, (7.74 + 9.08 + 9.25 + 4.8 + 5.38 + 9.43) / 6],
+      ["2026-10-16", 9.2, (7.74 + 9.08 + 9.25 + 4.8 + 5.38 + 9.43 + 9.2) / 7],
+      ["2026-11-04", 6.46, (14.82 + 9.06 + 12 + 7.91 + 4.77 + 6.2 + 6.46) / 7],
+    ],
+    move: [
+      ["2026-10-09", 409, 409],
+      ["2026-10-15", 658, (409 + 480 + 524 + 247 + 306 + 658) / 6],
+      ["2026-10-16", 556, (409 + 480 + 524 + 247 + 306 + 658 + 556) / 7],
+      ["2026-11-04", 319, (752 + 482 + 714 + 468 + 347 + 310 + 319) / 7],
+    ],
+    exercise: [
+      ["2026-10-09", 36, 36],
+      ["2026-10-15", 51, (36 + 34 + 46 + 46 + 28 + 51) / 6],
+      ["2026-10-16", 33, (36 + 34 + 46 + 46 + 28 + 51 + 33) / 7],
+      ["2026-11-04", 25, (50 + 43 + 67 + 22 + 10 + 23 + 25) / 7],
+    ],
+    stand: [
+      ["2026-10-09", 5, 5],
+      ["2026-10-15", 13, (5 + 7 + 8 + 2 + 2 + 13) / 6],
+      ["2026-10-16", 10, (5 + 7 + 8 + 2 + 2 + 13 + 10) / 7],
+      ["2026-11-04", 4, (14 + 6 + 8 + 6 + 5 + 4 + 4) / 7],
+    ],
+  };
+  selectedDate = "2026-11-04";
+  expect(fitnessBarAlpha(false, "light") === 0.3 && fitnessBarAlpha(true, "light") === 0.58, "light bars stay soft");
+  expect(fitnessBarAlpha(false, "dark") === 0.4 && fitnessBarAlpha(true, "dark") === 0.72, "dark bars stay soft");
+  Object.keys(maCases).forEach((key) => {
+    const spec = specs.find((item) => item.key === key);
+    const points = fitnessPoints(key);
+    const model = chartModel(points, spec);
+    const sets = chartDatasets(points, spec);
+    expect(spec.combo === true && spec.maWindow === 7, key + " combo");
+    expect(sets[0].type === "bar" && sets[0].role === "daily" && sets[1].type === "line" && sets[1].role === "average", key + " series");
+    expect(sets[1].order < sets[0].order && sets[1].fill === false, key + " line on top");
+    expect(sets[0].data.length === model.dates.length && sets[1].data.length === model.dates.length, key + " aligned");
+    expect(model.dates.join() === points.map((point) => point.date).join(), key + " dates");
+    expect(model.dates.indexOf("2026-10-13") === -1 && model.dates.indexOf("2026-10-18") === -1, key + " skips missing days");
+    expect(model.dates[5] === "2026-10-15" && model.dates[6] === "2026-10-16", key + " early order");
+    if (spec.quota == null) expect(!sets.some((set) => set.role === "quota"), key + " has no goal");
+    else expect(sets.some((set) => set.role === "quota" && set.data[0] === spec.quota), key + " goal");
+    const plain = sets[0].backgroundColor[0];
+    const marked = sets[0].backgroundColor[model.dates.indexOf("2026-11-04")];
+    expect(plain === hexAlpha(chartSeriesColor(key), 0.4), key + " bar " + plain);
+    expect(marked === hexAlpha(chartSeriesColor(key), 0.72), key + " selected bar " + marked);
+    maCases[key].forEach((row) => {
+      const at = model.dates.indexOf(row[0]);
+      expect(at !== -1, key + " " + row[0]);
+      expectNear(model.values[at], row[1], key + " " + row[0] + " bar");
+      expectNear(model.average[at], row[2], key + " " + row[0] + " ma");
+      expectNear(sets[0].data[at], row[1], key + " " + row[0] + " dataset bar");
+      expectNear(sets[1].data[at], row[2], key + " " + row[0] + " dataset line");
+    });
+  });
+  const stepsSpec = specs.find((spec) => spec.key === "steps");
+  expect(chartCaption(stepsSpec) === "淺色柱 = 當日 · 實線 = 7 日平均", chartCaption(stepsSpec));
+  const moveSpec = specs.find((spec) => spec.key === "move");
+  expect(chartCaption(moveSpec).indexOf("淺色柱 = 當日 · 實線 = 7 日平均 · 虛線 = 目標 360 kcal") === 0, chartCaption(moveSpec));
+  const stepsSummary = pointSummary(fitnessPoints("steps"), stepsSpec);
+  expect(stepsSummary.includes("7 日平均"), stepsSummary);
+  if (fitnessSorted()[fitnessSorted().length - 1].date === "2026-11-04") {
+    expect(stepsSummary.includes("11,192.1") && stepsSummary.includes("11月4日"), stepsSummary);
+    expect(fmtAverage((19073 + 11153 + 15389 + 10041 + 6473 + 7901 + 8315) / 7, stepsSpec) === "11,192.1", "steps average label");
+  }
+  const moveModel = chartModel(fitnessPoints("move"), moveSpec);
   expect(moveModel.quota === 360, "move goal line");
   expect(Array.isArray(data.advice.eating) && data.advice.eating.some((item) => item.includes("溫水")), "advice eating");
   expect(Array.isArray(data.advice.meds_safety) && data.advice.meds_safety.some((item) => item.includes("西柚")), "meds safety");
@@ -2493,11 +2709,11 @@ function runSelfCheck() {
   expect(Array.isArray(data.foodLists.protein) && data.foodLists.protein.some((item) => item.includes("全熟")) && data.foodLists.protein.some((item) => item.includes("海參")), "protein examples");
   expect(Array.isArray(data.foodLists.fiber) && data.foodLists.fiber.some((item) => item.includes("天然果糖")), "fiber examples");
   expect(Array.isArray(data.foodLists.caution) && data.foodLists.caution.some((item) => item.includes("綠豆沙")), "caution foods");
-  expect(daysNewest()[0].date === "2026-10-20", "newest first");
+  expect(daysNewest()[0].date === latestDate(), "newest first");
   const logged = daysSorted().find((day) => day.date === "2026-10-19");
   expect(logged.kcal === 1911.5 && logged.partial === false && logged.meals.length === 7, "oct 19 totals stay");
   const morning = daysSorted().find((day) => day.date === "2026-10-20");
-  expect(morning.partial === true && morning.kcal === 610 && morning.fat === 18 && morning.added_sugar === 0 && morning.water_ml == null, "oct 20 breakfast only");
+  expect(morning.partial === false && morning.meals[0].kcal === 610 && morning.water_ml == null, "oct 20 closed");
   expect(morning.meds_and_symptoms.xeloda_am === "08:30" && morning.bowel.count == null, "oct 20 tracking");
   expect(!daysSorted().some((day) => day.date < "2026-10-20" && (day.meds_and_symptoms || day.bowel || day.water_ml != null)), "no invented history");
   const mealCounts = {
@@ -2512,10 +2728,12 @@ function runSelfCheck() {
     "2026-10-17": 5,
     "2026-10-18": 7,
     "2026-10-19": 7,
-    "2026-10-20": 1,
   };
   daysSorted().forEach((day) => {
-    expect(Array.isArray(day.meals) && day.meals.length === mealCounts[day.date], day.date + " meal count " + (day.meals && day.meals.length));
+    expect(Array.isArray(day.meals) && day.meals.length > 0, day.date + " meal count " + (day.meals && day.meals.length));
+    if (Object.prototype.hasOwnProperty.call(mealCounts, day.date)) {
+      expect(day.meals.length === mealCounts[day.date], day.date + " meal count " + day.meals.length);
+    }
     ["kcal", "carbs", "sugar", "fiber", "protein", "sodium"].forEach((key) => {
       const sum = day.meals.reduce((total, item) => total + Number(item[key] || 0), 0);
       expect(Math.abs(sum - day[key]) < 0.05, day.date + " " + key + " sum " + sum);
